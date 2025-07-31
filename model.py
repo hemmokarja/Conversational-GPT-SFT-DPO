@@ -11,6 +11,20 @@ from torch.nn import functional as F
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class GPTConfig:
+    seq_len: int = 1024
+    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.0
+    bias: bool = True
+    padding_idx: int = None
+    lora_r: float = None
+    lora_alpha: float = None
+
+
 class LayerNorm(nn.Module):
     def __init__(self, ndim, bias):
         super().__init__()
@@ -88,18 +102,6 @@ class Block(nn.Module):
         return x
 
 
-@dataclass
-class GPTConfig:
-    seq_len: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    dropout: float = 0.0
-    bias: bool = True
-    padding_idx: int = None
-
-
 def _get_causal_attn_mask(seq_len, device):
     causal_mask = torch.tril(
         torch.ones((seq_len, seq_len), dtype=torch.bool, device=device)
@@ -133,7 +135,7 @@ def _get_combined_attn_mask(seq_len, valid_mask, device):
     return causal_mask & from_to_mask  # [B, 1, S, S]
 
 
-class GPT(nn.Module):
+class GPT2(nn.Module):
 
     def __init__(self, config):
         super().__init__()
@@ -225,12 +227,12 @@ class GPT(nn.Module):
             )
 
         override_args = override_args or {}
-        if not all(k == "dropout" for k in override_args):
-            raise ValueError("Only dropout can be overridden")
+        allowed_overrides = {"dropout", "lora_r", "lora_alpha"}
+        if not all(k in allowed_overrides for k in override_args):
+            raise ValueError(f"Allowed overrides are: {', '.join(allowed_overrides)}")
         
-        from transformers import GPT2LMHeadModel
         logger.info(f"Initializing a pre-trained {model_type} model...")
-
+        
         config_args = {
             "gpt2": {"n_layer": 12, "n_head": 12, "n_embd": 768},  # 124M params
             "gpt2-medium": {"n_layer": 24, "n_head": 16, "n_embd": 1024},  # 350M params
@@ -238,21 +240,22 @@ class GPT(nn.Module):
             "gpt2-xl": {"n_layer": 48, "n_head": 25, "n_embd": 1600},  # 1558M params
         }[model_type]
 
-        logger.debug("Forcing vocab_size=50257, seq_len=1024, bias=True")
+        logger.debug("Forcing vocab_size=50257, seq_len=1024, bias=True")  # per gpt2
         config_args["vocab_size"] = 50257
         config_args["seq_len"] = 1024
         config_args["bias"] = True
 
-        if "dropout" in override_args:
-            logger.info(f"Overriding dropout rate to {override_args['dropout']}")
-            config_args["dropout"] = override_args["dropout"]
+        for arg_name, arg_value in override_args.items():
+            logger.info(f"Overriding {arg_name} to {arg_value}")
+            config_args[arg_name] = arg_value
 
         config = GPTConfig(**config_args)
-        model = GPT(config)
+        model = GPT2(config)
         state = model.state_dict()
         state_keys = [k for k in state.keys() if not k.endswith(".attn.bias")] # discard buffer
 
         logger.info("Loading pre-trained weights from HuggingFace...")
+        from transformers import GPT2LMHeadModel
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
         state_hf = model_hf.state_dict()
 
@@ -332,6 +335,58 @@ class GPT(nn.Module):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.config.n_layer)
                 )
 
+
+class LoRALinear(nn.Module):
+    def __init__(
+        self, in_features, out_features, r=8, alpha=32, dropout=0.0, bias=True
+    ):
+        super().__init__()
+        self.r = r
+        self.alpha = alpha
+        self.scale = alpha / r
+
+        self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+
+        self.lora_A = nn.Parameter(torch.randn(r, in_features) * 0.02)
+        self.lora_B = nn.Parameter(torch.zeros(out_features, r))
+        self.dropout = nn.Dropout(dropout)
+
+    @classmethod
+    def from_linear(cls, linear: nn.Linear, r=8, alpha=32, dropout=0.0):
+        if not isinstance(linear, nn.Linear):
+            raise ValueError("Only nn.Linear layers can be converted to LoRALinear")
+
+        lora = cls(
+            in_features=linear.in_features,
+            out_features=linear.out_features,
+            r=r,
+            alpha=alpha,
+            dropout=dropout,
+            bias=linear.bias is not None,
+        )
+        lora.weight.data.copy_(linear.weight.data)
+        if linear.bias is not None:
+            lora.bias.data.copy_(linear.bias.data)
+        return lora
+
+    def forward(self, x):
+        x_base = F.linear(x, self.weight, self.bias)  # [*, out_features]
+
+        x_lora = self.dropout(x) if self.training else x
+        x_lora = F.linear(x, self.lora_A.T)  # [*, r]
+        x_lora = F.linear(x_lora, self.lora_B.T) # [*, out_features]
+        x_lora = x_lora * self.scale
+
+        return x_base + x_lora
+
+
+class FineTunableGPT2(GPT2):
+    def __init__(self, config):
+        super().__init__(config)
+        self.original_vocab_size = config.vocab_size
+        self.new_token_indices = []  # track indices of newly added tokens
+
     def extend_token_embeddings(self, new_vocab_size):
         """
         Extends the token embedding and lm_head projection layers to match
@@ -341,6 +396,8 @@ class GPT(nn.Module):
         if new_vocab_size <= old_vocab_size:
             logger.warning(f"Nothing to do: {new_vocab_size=} <= {old_vocab_size=}")
             return
+
+        self.new_token_indices = list(range(old_vocab_size, new_vocab_size))
 
         new_wte = nn.Embedding(new_vocab_size, n_embd)
         new_wte.weight.data[:old_vocab_size] = self.transformer.wte.weight.data
@@ -386,3 +443,88 @@ class GPT(nn.Module):
         self.config.padding_idx = padding_idx
 
         logger.info(f"Set padding embedding at index {padding_idx} to zero")
+
+    def init_lora(self):
+        for block in self.transformer.h:
+            block.attn.c_attn = LoRALinear.from_linear(
+                block.attn.c_attn, self.config.lora_r, self.config.lora_alpha
+            )
+            block.attn.c_proj = LoRALinear.from_linear(
+                block.attn.c_proj, self.config.lora_r, self.config.lora_alpha
+            )
+            block.mlp.c_fc = LoRALinear.from_linear(
+                block.mlp.c_fc, self.config.lora_r, self.config.lora_alpha
+            )
+            block.mlp.c_proj = LoRALinear.from_linear(
+                block.mlp.c_proj, self.config.lora_r, self.config.lora_alpha
+            )
+        
+        logger.info("Initialized LoRA layers for all attention and MLP projections")
+
+        self._setup_parameter_freezing()
+
+    def _setup_parameter_freezing(self):
+        """
+        Freeze parameters according to LoRA + selective embedding strategy:
+        - Keep LoRA A and B matrices trainable
+        - Keep new token embeddings trainable (but not padding token)
+        - Freeze everything else
+        """
+        for name, param in self.named_parameters():
+            if "lora_" in name:
+                param.requires_grad = True
+                continue
+            
+            if "transformer.wte.weight" in name:
+                # allow grads by default, but freeze selectively with hooks
+                param.requires_grad = True
+                self._register_selective_embedding_hook()
+                continue
+
+            if "lm_head.weight" in name:
+                # lm_head is tied to wte, so we don't need to handle it separately
+                continue
+
+            param.requires_grad = False
+            
+        logger.info(
+            "Applied selective parameter freezing for LoRA and new token embeddings"
+        )
+
+    def _register_selective_embedding_hook(self):
+        """
+        Register a backward hook to selectively compute gradients only for new token
+        embeddings (excluding padding token)
+        """
+        def selective_embedding_hook(grad):
+            if grad is None:
+                return grad
+
+            mask = torch.zeros_like(grad, dtype=torch.bool)
+
+            for idx in self.new_token_indices:
+                if self.config.padding_idx is None or idx != self.config.padding_idx:
+                    mask[idx] = True
+
+            return grad * mask.float()
+
+        self.transformer.wte.weight.register_hook(selective_embedding_hook)
+
+        trainable_new_tokens = [
+            idx for idx in self.new_token_indices 
+            if self.config.padding_idx is None or idx != self.config.padding_idx
+        ]
+        logger.info(
+            f"Registered selective gradient hook for "
+            f"{len(trainable_new_tokens)} new tokens"
+        )
+
+    def get_optimizer_parameters(self):
+        """
+        Get parameters that should be passed to the optimizer.
+
+        Returns parameters where requires_grad=True. Note that for embeddings,
+        even though requires_grad=True, the backward hook ensures only new tokens
+        receive gradient updates.
+        """
+        return [param for param in self.parameters() if param.requires_grad]
