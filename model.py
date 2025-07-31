@@ -2,6 +2,7 @@ import math
 import inspect
 import logging
 from dataclasses import dataclass
+from typing import Optional, Dict, Any
 
 import torch
 import torch.nn as nn
@@ -21,8 +22,18 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = True
     padding_idx: int = None
-    lora_r: float = None
-    lora_alpha: float = None
+
+
+@dataclass
+class LoRAConfig:
+    r: int = 8
+    alpha: float = 32.0
+    dropout: float = 0.0
+    target_modules: list = None  # Which modules to apply LoRA to
+
+    def __post_init__(self):
+        if self.target_modules is None:
+            self.target_modules = ["c_attn", "c_proj", "c_fc"]
 
 
 class LayerNorm(nn.Module):
@@ -227,12 +238,12 @@ class GPT2(nn.Module):
             )
 
         override_args = override_args or {}
-        allowed_overrides = {"dropout", "lora_r", "lora_alpha"}
+        allowed_overrides = {"dropout"}
         if not all(k in allowed_overrides for k in override_args):
             raise ValueError(f"Allowed overrides are: {', '.join(allowed_overrides)}")
         
         logger.info(f"Initializing a pre-trained {model_type} model...")
-        
+
         config_args = {
             "gpt2": {"n_layer": 12, "n_head": 12, "n_embd": 768},  # 124M params
             "gpt2-medium": {"n_layer": 24, "n_head": 16, "n_embd": 1024},  # 350M params
@@ -335,6 +346,15 @@ class GPT2(nn.Module):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.config.n_layer)
                 )
 
+    def apply_lora(self, lora_config, new_vocab_size, padding_idx):
+        """Convert this GPT2 model to a fine-tunable version with LoRA layers.""" 
+        return LoRAGPT2.from_base_model(
+            base_model=self,
+            lora_config=lora_config,
+            new_vocab_size=new_vocab_size,
+            padding_idx=padding_idx
+        )
+
 
 class LoRALinear(nn.Module):
     def __init__(
@@ -381,13 +401,30 @@ class LoRALinear(nn.Module):
         return x_base + x_lora
 
 
-class FineTunableGPT2(GPT2):
-    def __init__(self, config):
+class LoRAGPT2(GPT2):
+    def __init__(self, config, lora_config: LoRAConfig):
+        # Initialize as regular GPT2 first
         super().__init__(config)
+        self.lora_config = lora_config
         self.original_vocab_size = config.vocab_size
-        self.new_token_indices = []  # track indices of newly added tokens
+        self.new_token_indices = []
 
-    def extend_token_embeddings(self, new_vocab_size):
+    @classmethod
+    def from_base_model(cls, base_model, lora_config, new_vocab_size, padding_idx):
+        """Create fine-tunable LoRAGPT2 from an existing GPT2 base model."""
+        lora_model = cls(base_model.config, lora_config)
+        lora_model.load_state_dict(base_model.state_dict())
+
+        if new_vocab_size is not None:
+            lora_model._extend_token_embeddings(new_vocab_size)
+        
+        if padding_idx is not None:
+            lora_model._set_padding_embedding(padding_idx)
+
+        lora_model._init_lora()
+        return lora_model
+
+    def _extend_token_embeddings(self, new_vocab_size):
         """
         Extends the token embedding and lm_head projection layers to match
         new_vocab_size. Must be called after tokenizer has been expanded.
@@ -413,7 +450,7 @@ class FineTunableGPT2(GPT2):
 
         logger.info(f"Extended token embeddings: {old_vocab_size} -> {new_vocab_size}")
 
-    def set_padding_embedding(self, padding_idx):
+    def _set_padding_embedding(self, padding_idx):
         if self.transformer.wte.padding_idx is not None:
             raise ValueError(
                 "Padding index configured already for token embeddings "
@@ -440,28 +477,38 @@ class FineTunableGPT2(GPT2):
 
         self.transformer.wte = new_wte
         self.lm_head.weight = self.transformer.wte.weight  # re-tie
+
+        # also modify original config since it's used in forward in CE loss
         self.config.padding_idx = padding_idx
 
         logger.info(f"Set padding embedding at index {padding_idx} to zero")
 
-    def init_lora(self):
+    def _init_lora(self):
         n_trained_old = sum(p.numel() for p in self.parameters())
 
+        lora_kwargs = {
+            "r": self.lora_config.r,
+            "alpha": self.lora_config.alpha,
+            "dropout": self.lora_config.dropout,
+        }
         for block in self.transformer.h:
-            block.attn.c_attn = LoRALinear.from_linear(
-                block.attn.c_attn, self.config.lora_r, self.config.lora_alpha
-            )
-            block.attn.c_proj = LoRALinear.from_linear(
-                block.attn.c_proj, self.config.lora_r, self.config.lora_alpha
-            )
-            block.mlp.c_fc = LoRALinear.from_linear(
-                block.mlp.c_fc, self.config.lora_r, self.config.lora_alpha
-            )
-            block.mlp.c_proj = LoRALinear.from_linear(
-                block.mlp.c_proj, self.config.lora_r, self.config.lora_alpha
-            )
-        
-        logger.info("Initialized LoRA layers for all attention and MLP projections")
+            if "c_attn" in self.lora_config.target_modules:
+                block.attn.c_attn = LoRALinear.from_linear(
+                    block.attn.c_attn, **lora_kwargs
+                )
+            if "c_proj" in self.lora_config.target_modules:
+                block.attn.c_proj = LoRALinear.from_linear(
+                    block.attn.c_proj, **lora_kwargs
+                )
+                block.mlp.c_proj = LoRALinear.from_linear(
+                    block.mlp.c_proj, **lora_kwargs
+                )
+            if "c_fc" in self.lora_config.target_modules:
+                block.mlp.c_fc = LoRALinear.from_linear(
+                    block.mlp.c_fc, **lora_kwargs
+                )
+
+        logger.info(f"Initialized LoRA layers for modules: {self.lora_config.target_modules}")
 
         self._setup_parameter_freezing()
 
