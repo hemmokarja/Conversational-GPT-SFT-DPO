@@ -250,7 +250,7 @@ class GPT2(nn.Module):
             config_args[arg_name] = arg_value
 
         config = GPTConfig(**config_args)
-        model = GPT2(config)
+        model = cls(config)
         state = model.state_dict()
         state_keys = [k for k in state.keys() if not k.endswith(".attn.bias")] # discard buffer
 
@@ -445,6 +445,8 @@ class FineTunableGPT2(GPT2):
         logger.info(f"Set padding embedding at index {padding_idx} to zero")
 
     def init_lora(self):
+        n_trained_old = sum(p.numel() for p in self.parameters())
+
         for block in self.transformer.h:
             block.attn.c_attn = LoRALinear.from_linear(
                 block.attn.c_attn, self.config.lora_r, self.config.lora_alpha
@@ -463,6 +465,13 @@ class FineTunableGPT2(GPT2):
 
         self._setup_parameter_freezing()
 
+        n_trained = sum(p.numel() for p in self.get_optimizer_parameters())
+
+        logger.info(
+            f"LoRA initialized: parameters requiring gradient computation "
+            f"{n_trained_old / 1e6:.2f} M -> {n_trained / 1e6:.2f} M"
+        )
+
     def _setup_parameter_freezing(self):
         """
         Freeze parameters according to LoRA + selective embedding strategy:
@@ -476,9 +485,18 @@ class FineTunableGPT2(GPT2):
                 continue
             
             if "transformer.wte.weight" in name:
-                # allow grads by default, but freeze selectively with hooks
-                param.requires_grad = True
-                self._register_selective_embedding_hook()
+                # if new tokens, allow grads by default, but freeze selectively with
+                # hooks; otherwise, freeze all embeddings
+                trainable_new_tokens = [
+                    idx for idx in self.new_token_indices 
+                    if self.config.padding_idx is None or idx != self.config.padding_idx
+                ]
+                if trainable_new_tokens:
+                    param.requires_grad = True
+                    self._register_selective_embedding_hook()
+                else:
+                    logger.info("No new trainable tokens, freezing all embeddings")
+                    param.requires_grad = False
                 continue
 
             if "lm_head.weight" in name:
