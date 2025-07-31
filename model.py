@@ -85,9 +85,9 @@ class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu = nn.GELU()
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -230,11 +230,16 @@ class GPT2(nn.Module):
 
     @classmethod
     def from_pretrained(cls, model_type, override_args=None):
-        supported = {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
-        if model_type not in supported:
+        supported_configs = {
+            "gpt2": {"n_layer": 12, "n_head": 12, "n_embd": 768},  # 124M params
+            "gpt2-medium": {"n_layer": 24, "n_head": 16, "n_embd": 1024},  # 350M params
+            "gpt2-large": {"n_layer": 36, "n_head": 20, "n_embd": 1280},  # 774M params
+            "gpt2-xl": {"n_layer": 48, "n_head": 25, "n_embd": 1600},  # 1558M params
+        }
+        if model_type not in supported_configs:
             raise ValueError(
                 f"Unsupported model type: {model_type}. Supported types are: "
-                f"{', '.join(supported)}"
+                f"{', '.join(supported_configs.keys())}"
             )
 
         override_args = override_args or {}
@@ -244,13 +249,7 @@ class GPT2(nn.Module):
         
         logger.info(f"Initializing a pre-trained {model_type} model...")
 
-        config_args = {
-            "gpt2": {"n_layer": 12, "n_head": 12, "n_embd": 768},  # 124M params
-            "gpt2-medium": {"n_layer": 24, "n_head": 16, "n_embd": 1024},  # 350M params
-            "gpt2-large": {"n_layer": 36, "n_head": 20, "n_embd": 1280},  # 774M params
-            "gpt2-xl": {"n_layer": 48, "n_head": 25, "n_embd": 1600},  # 1558M params
-        }[model_type]
-
+        config_args = supported_configs[model_type]
         logger.debug("Forcing vocab_size=50257, seq_len=1024, bias=True")  # per gpt2
         config_args["vocab_size"] = 50257
         config_args["seq_len"] = 1024
