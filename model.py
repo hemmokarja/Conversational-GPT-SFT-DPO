@@ -35,7 +35,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.head_size = config.n_embd // config.n_head
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         B, S, C = x.size()
 
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
@@ -47,9 +47,9 @@ class CausalSelfAttention(nn.Module):
             q,
             k,
             v,
-            attn_mask=None,
+            attn_mask=attn_mask,
             dropout_p=self.dropout if self.training else 0,
-            is_causal=True
+            is_causal=True if attn_mask is None else False
         )  # [B, nh, S, hs]
         y = y.transpose(1, 2).contiguous().view(B, S, C)  # [B, S, C]
         y = self.resid_dropout(self.c_proj(y))
@@ -82,21 +82,55 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, attn_mask=None):
+        x = x + self.attn(self.ln_1(x), attn_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024
+    seq_len: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True
+    padding_idx: int = None
+
+
+def _get_causal_attn_mask(seq_len, device):
+    causal_mask = torch.tril(
+        torch.ones((seq_len, seq_len), dtype=torch.bool, device=device)
+    )
+    return causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
+
+
+def _get_from_to_attn_mask(non_pad_mask):
+    # prevent attending *to* pad tokens
+    to_mask = non_pad_mask.unsqueeze(1)  # [B, 1, S]
+    # prevent attending *from* pad tokens (= generate outputs for padding tokens)
+    from_mask = non_pad_mask.unsqueeze(2)  # [B, S, 1]
+    from_to_mask = from_mask & to_mask  # [B, S, S]
+    return from_to_mask.unsqueeze(1)  # [B, 1, S, S]
+
+
+def _get_combined_attn_mask(seq_len, valid_mask, device):
+    """
+    Build an attention mask that prevents attending to future tokens and padded tokens.
+    The resulting mask has True indicating that the element should take part in
+    attention. The resulting mask must be broadcastable to tensor of attention
+    weights produced by the scaled dot-product attention computation, [B, nh, S, S].
+
+    valid_mask: [B, S]
+    attn_mask: [B, 1, S, S]
+    """
+    if valid_mask is None:
+        return None
+    causal_mask = _get_causal_attn_mask(seq_len, device)  # [1, 1, S, S]
+    from_to_mask = _get_from_to_attn_mask(valid_mask)  # [B, 1, S, S]
+    return causal_mask & from_to_mask  # [B, 1, S, S]
 
 
 class GPT(nn.Module):
@@ -108,7 +142,7 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
-                "wpe": nn.Embedding(config.block_size, config.n_embd),
+                "wpe": nn.Embedding(config.seq_len, config.n_embd),
                 "drop": nn.Dropout(config.dropout),
                 "h": nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 "ln_f": LayerNorm(config.n_embd, bias=config.bias),
@@ -129,7 +163,7 @@ class GPT(nn.Module):
     def generate(self, x, max_tokens, temperature=1.0, top_k=None):
         for _ in range(max_tokens):
 
-            x = x[:, -self.config.block_size:]
+            x = x[:, -self.config.seq_len:]
             logits, _ = self(x)  # [B, 1, vocab]
             logits = logits[:, -1, :] / temperature  # [B, vocab]
 
@@ -143,27 +177,37 @@ class GPT(nn.Module):
 
         return x
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, valid_mask=None):
+        """
+        x: [B, S] tensor of token indices
+        y: [B, S] tensor of target token indices (optional, for training)
+        valid_mask: [B, S]  True = valid token, False = padding
+        """
         B, S = x.size()
-        
-        if S > self.config.block_size:
+
+        if S > self.config.seq_len:
             raise ValueError(
                 f"Cannot forward sequence of length {S}, block size is only "
-                f"{self.config.block_size}"
+                f"{self.config.seq_len}"
             )
+        
+        attn_mask = _get_combined_attn_mask(S, valid_mask, x.device)
 
         tok_emb = self.transformer.wte(x)  # [B, S, C]
         pos_emb = self.transformer.wpe(torch.arange(S, device=x.device))  # [B, S, C]
         emb = tok_emb + pos_emb
+
         emb = self.transformer.drop(emb)
         for block in self.transformer.h:
-            emb = block(emb)
+            emb = block(emb, attn_mask)
         emb = self.transformer.ln_f(emb)
 
         if y is not None:
             logits = self.lm_head(emb)  # [B, S, vocab]
             loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=0
+                logits.view(-1, logits.size(-1)),
+                y.view(-1),
+                ignore_index=self.config.padding_idx
             )
         else:
             logits = self.lm_head(emb[:, [-1], :])  # [B, 1, vocab]
@@ -173,10 +217,11 @@ class GPT(nn.Module):
 
     @classmethod
     def from_pretrained(cls, model_type, override_args=None):
-        if model_type not in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}:
+        supported = {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
+        if model_type not in supported:
             raise ValueError(
-                f"Unsupported model type: {model_type}. "
-                "Supported types are: gpt2, gpt2-medium, gpt2-large, gpt2-xl"
+                f"Unsupported model type: {model_type}. Supported types are: "
+                f"{', '.join(supported)}"
             )
 
         override_args = override_args or {}
@@ -193,9 +238,9 @@ class GPT(nn.Module):
             "gpt2-xl": {"n_layer": 48, "n_head": 25, "n_embd": 1600},  # 1558M params
         }[model_type]
 
-        logger.debug("Forcing vocab_size=50257, block_size=1024, bias=True")
+        logger.debug("Forcing vocab_size=50257, seq_len=1024, bias=True")
         config_args["vocab_size"] = 50257
-        config_args["block_size"] = 1024
+        config_args["seq_len"] = 1024
         config_args["bias"] = True
 
         if "dropout" in override_args:
@@ -286,3 +331,58 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.config.n_layer)
                 )
+
+    def extend_token_embeddings(self, new_vocab_size):
+        """
+        Extends the token embedding and lm_head projection layers to match
+        new_vocab_size. Must be called after tokenizer has been expanded.
+        """
+        old_vocab_size, n_embd = self.transformer.wte.weight.shape
+        if new_vocab_size <= old_vocab_size:
+            logger.warning(f"Nothing to do: {new_vocab_size=} <= {old_vocab_size=}")
+            return
+
+        new_wte = nn.Embedding(new_vocab_size, n_embd)
+        new_wte.weight.data[:old_vocab_size] = self.transformer.wte.weight.data
+        new_wte.weight.data[old_vocab_size:] = (
+            torch.randn((new_vocab_size - old_vocab_size, n_embd)) * 0.02
+        )
+        self.transformer.wte = new_wte
+
+        self.lm_head = nn.Linear(n_embd, new_vocab_size, bias=False)
+        self.lm_head.weight = self.transformer.wte.weight  # re-tie
+
+        self.config.vocab_size = new_vocab_size
+
+        logger.info(f"Extended token embeddings: {old_vocab_size} -> {new_vocab_size}")
+
+    def set_padding_embedding(self, padding_idx):
+        if self.transformer.wte.padding_idx is not None:
+            raise ValueError(
+                "Padding index configured already for token embeddings "
+                f"(index {self.transformer.wte.padding_idx})"
+            )
+
+        if not padding_idx < self.transformer.wte.weight.shape[0]:
+            raise ValueError(
+                f"{padding_idx=} out of bounds, only "
+                f"{self.transformer.wte.weight.shape[0]} token embeddings"
+            )
+
+        old_wte = self.transformer.wte
+        embed_dim = old_wte.weight.shape[1]
+        vocab_size = old_wte.weight.shape[0]
+
+        # need to init a new nn.Embedding layer with padding_idx set so that gradients
+        # are not computed for the padding token
+        new_wte = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+
+        with torch.no_grad():
+            new_wte.weight.data.copy_(old_wte.weight.data)
+            new_wte.weight.data[padding_idx].fill_(0.0)
+
+        self.transformer.wte = new_wte
+        self.lm_head.weight = self.transformer.wte.weight  # re-tie
+        self.config.padding_idx = padding_idx
+
+        logger.info(f"Set padding embedding at index {padding_idx} to zero")
