@@ -346,14 +346,8 @@ class GPT2(nn.Module):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.config.n_layer)
                 )
 
-    def apply_lora(self, lora_config, new_vocab_size, padding_idx):
-        """Convert this GPT2 model to a fine-tunable version with LoRA layers.""" 
-        return LoRAGPT2.from_base_model(
-            base_model=self,
-            lora_config=lora_config,
-            new_vocab_size=new_vocab_size,
-            padding_idx=padding_idx
-        )
+    def to_fine_tuneable(self):
+        return FineTuneableGPT2.from_base_model(self)
 
 
 class LoRALinear(nn.Module):
@@ -401,30 +395,19 @@ class LoRALinear(nn.Module):
         return x_base + x_lora
 
 
-class LoRAGPT2(GPT2):
-    def __init__(self, config, lora_config: LoRAConfig):
-        # Initialize as regular GPT2 first
+class FineTuneableGPT2(GPT2):
+    def __init__(self, config):
         super().__init__(config)
-        self.lora_config = lora_config
         self.original_vocab_size = config.vocab_size
         self.new_token_indices = []
 
     @classmethod
-    def from_base_model(cls, base_model, lora_config, new_vocab_size, padding_idx):
-        """Create fine-tunable LoRAGPT2 from an existing GPT2 base model."""
-        lora_model = cls(base_model.config, lora_config)
-        lora_model.load_state_dict(base_model.state_dict())
+    def from_base_model(cls, base_model):
+        model = cls(base_model.config)
+        model.load_state_dict(base_model.state_dict())
+        return model
 
-        if new_vocab_size is not None:
-            lora_model._extend_token_embeddings(new_vocab_size)
-        
-        if padding_idx is not None:
-            lora_model._set_padding_embedding(padding_idx)
-
-        lora_model._init_lora()
-        return lora_model
-
-    def _extend_token_embeddings(self, new_vocab_size):
+    def extend_vocabulary(self, new_vocab_size):
         """
         Extends the token embedding and lm_head projection layers to match
         new_vocab_size. Must be called after tokenizer has been expanded.
@@ -450,7 +433,7 @@ class LoRAGPT2(GPT2):
 
         logger.info(f"Extended token embeddings: {old_vocab_size} -> {new_vocab_size}")
 
-    def _set_padding_embedding(self, padding_idx):
+    def set_padding_token(self, padding_idx):
         if self.transformer.wte.padding_idx is not None:
             raise ValueError(
                 "Padding index configured already for token embeddings "
@@ -483,7 +466,9 @@ class LoRAGPT2(GPT2):
 
         logger.info(f"Set padding embedding at index {padding_idx} to zero")
 
-    def _init_lora(self):
+    def apply_lora(self, lora_config):
+        self.lora_config = lora_config
+
         n_trained_old = sum(p.numel() for p in self.parameters())
 
         lora_kwargs = {
@@ -510,16 +495,16 @@ class LoRAGPT2(GPT2):
 
         logger.info(f"Initialized LoRA layers for modules: {self.lora_config.target_modules}")
 
-        self._setup_parameter_freezing()
+        self._freeze_parameters()
 
         n_trained = sum(p.numel() for p in self.get_optimizer_parameters())
 
         logger.info(
-            f"LoRA initialized: parameters requiring gradient computation "
+            f"LoRA initialized: num. of parameters requiring gradient computation: "
             f"{n_trained_old / 1e6:.2f} M -> {n_trained / 1e6:.2f} M"
         )
 
-    def _setup_parameter_freezing(self):
+    def _freeze_parameters(self):
         """
         Freeze parameters according to LoRA + selective embedding strategy:
         - Keep LoRA A and B matrices trainable
