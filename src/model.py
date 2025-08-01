@@ -1,5 +1,4 @@
 import math
-import inspect
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -7,7 +6,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
 
 logger = logging.getLogger(__name__)
 
@@ -301,28 +299,6 @@ class GPT2(nn.Module):
                     state[k].copy_(state_hf[k])
 
         return model
-
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device):
-        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
-
-        # Only >=2D parameters will be weight decayed, i.e. all weight tensors in
-        # matmuls + embeddings decay, but biases and layernorms won't.
-        decay_params = [p for p in param_dict.values() if p.dim() >= 2]
-        nodecay_params = [p for p in param_dict.values() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
-        ]
-
-        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device.type == "cuda"
-        extra_args = {"fused": True} if use_fused else {}
-
-        optimizer = torch.optim.AdamW(
-            optim_groups, lr=learning_rate, betas=betas, **extra_args
-        )
-
-        return optimizer
 
     def get_num_params(self, name_contains=None):
             if name_contains is None:
