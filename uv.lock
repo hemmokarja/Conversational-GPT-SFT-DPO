@@ -423,6 +423,7 @@ dependencies = [
     { name = "ipykernel" },
     { name = "numpy" },
     { name = "torch" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -432,6 +433,7 @@ requires-dist = [
     { name = "ipykernel", specifier = ">=6.30.0" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "torch", specifier = ">=2.7.1" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=4.54.1" },
 ]
 

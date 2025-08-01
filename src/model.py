@@ -2,7 +2,7 @@ import math
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -21,7 +21,8 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True
-    padding_idx: int = None
+    padding_idx: Optional[int] = None
+    ignored_idx: int = -100
 
 
 @dataclass
@@ -174,6 +175,7 @@ class GPT2(nn.Module):
 
     @torch.no_grad()
     def generate(self, x, max_tokens, temperature=1.0, top_k=None):
+        # TODO prevent sampling im start and padding tokens
         for _ in range(max_tokens):
 
             x = x[:, -self.config.seq_len:]
@@ -220,7 +222,7 @@ class GPT2(nn.Module):
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 y.view(-1),
-                ignore_index=self.config.padding_idx
+                ignore_index=self.config.ignored_idx
             )
         else:
             logits = self.lm_head(emb[:, [-1], :])  # [B, 1, vocab]
