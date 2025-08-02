@@ -1,7 +1,7 @@
 import math
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import torch.nn as nn
@@ -145,6 +145,12 @@ def _get_combined_attn_mask(seq_len, valid_mask, device):
     return causal_mask & from_to_mask  # [B, 1, S, S]
 
 
+def _apply_token_restrictions(logits, prevent_tokens=None):
+    if prevent_tokens is not None and len(prevent_tokens) > 0:
+        logits[..., prevent_tokens] = float("-inf")
+    return logits
+
+
 class GPT2(nn.Module):
 
     def __init__(self, config):
@@ -171,26 +177,7 @@ class GPT2(nn.Module):
             f"(of which {self.get_num_params('wte') / 1e6:.2f} M in embeddings)"
         )
 
-    @torch.no_grad()
-    def generate(self, x, max_tokens, temperature=1.0, top_k=None):
-        # TODO prevent sampling im start and padding tokens
-        for _ in range(max_tokens):
-
-            x = x[:, -self.config.seq_len:]
-            logits, _ = self(x)  # [B, 1, vocab]
-            logits = logits[:, -1, :] / temperature  # [B, vocab]
-
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float("Inf")
-
-            probs = F.softmax(logits, dim=-1)  # [B, vocab]
-            x_next = torch.multinomial(probs, num_samples=1)  # [B, 1]
-            x = torch.cat((x, x_next), dim=1)  # [B, S + 1]
-
-        return x
-
-    def forward(self, x, y=None, valid_mask=None):
+    def forward(self, x, y=None, valid_mask=None, prevent_tokens=None):
         """
         x: [B, S] tensor of token indices
         y: [B, S] tensor of target token indices (optional, for training)
@@ -226,7 +213,43 @@ class GPT2(nn.Module):
             logits = self.lm_head(emb[:, [-1], :])  # [B, 1, vocab]
             loss = None
 
+        logits = _apply_token_restrictions(logits, prevent_tokens)
+
         return logits, loss
+
+    @torch.no_grad()
+    def generate(
+        self,
+        x,
+        max_tokens,
+        temperature=1.0,
+        top_k=None,
+        stop_token=None,
+        prevent_tokens=None,
+    ):
+        if x.dim() != 2:
+            raise ValueError(f"Expected 2D input tensor (B, S), got {x.dim()}D")
+        if x.size(0) > 1:
+            raise ValueError("Batched generation not supported")
+
+        for _ in range(max_tokens):
+
+            x = x[:, -self.config.seq_len:]
+            logits, _ = self(x, prevent_tokens=prevent_tokens)  # [B, 1, vocab]
+            logits = logits[:, -1, :] / temperature  # [B, vocab]
+
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("Inf")
+
+            probs = F.softmax(logits, dim=-1)  # [B, vocab]
+            x_next = torch.multinomial(probs, num_samples=1)  # [B, 1]
+            x = torch.cat((x, x_next), dim=1)  # [B, S + 1]
+
+            if stop_token is not None and x_next.item() == stop_token:
+                break
+
+        return x
 
     @classmethod
     def from_pretrained(cls, model_type, override_args=None):

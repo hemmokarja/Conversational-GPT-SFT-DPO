@@ -1,8 +1,11 @@
 import contextlib
+import collections
 import logging
+import time
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Optional, List
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -10,9 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass()
-class Gpt4RecTrainerConfig:
-    compile: bool = True
+class TrainerConfig:
+    batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
+    validation_samples: int = 1000
+    validation_interval: int = 1000
+    sample_prompts: List[str] = []
+    log_interval: int = 100
+    compile: bool = True
     base_learning_rate: float = 3e-4
     min_learning_rate: float = 1e-6
     lr_step_size: int = 50_000_000
@@ -20,6 +28,13 @@ class Gpt4RecTrainerConfig:
     weight_decay: float = 1e-5
     betas: Tuple[float] = (0.9, 0.95)
     grad_clip: float = 1.2
+    num_workers: Optional[int] = None
+    prefetch_factor: int = 0
+    pin_memory: bool = False
+
+    def __post_init__(self):
+        if self.batch_size % self.gradient_acc_steps != 0:
+            raise ValueError("batch_size must be divisible by gradient_acc_steps")
 
 
 class _Collator:
@@ -92,11 +107,15 @@ def _configure_optimizer(model, weight_decay, learning_rate, betas):
     return optimizer, params
 
 
-def _make_iterator(dataset, padding_idx, ignored_idx, batch_size, shuffle=False):
+def _make_loader(dataset, padding_idx, ignored_idx, config, shuffle=False):
     collator = _Collator(padding_idx, ignored_idx)
+    micro_batch_size = config.batch_size // config.gradient_acc_steps
     loader = DataLoader(
         dataset,
-        batch_size=batch_size,
+        batch_size=micro_batch_size,
+        num_workers=config.num_workers,
+        prefetch_factor=config.prefetch_factor,
+        pin_memory=config.pin_memory,
         shuffle=shuffle,
         collate_fn=collator
     )
@@ -110,9 +129,9 @@ class Trainer:
         self.config = config
         self.model = model
         self.tokenizer = tokenizer
-        self.train_dataset = train_dataset
-        self.validation_dataset = validation_dataset
         self.device = device
+
+        self.samples_seen = 0
 
         optimizer, trainable_params = _configure_optimizer(
             model, config.weight_decay, config.base_learning_rate, config.betas
@@ -120,51 +139,50 @@ class Trainer:
         self.optimizer = optimizer
         self.trainable_params = trainable_params
 
-        if self.config.compile:
-            self.model = torch.compile(self.model)
-
-        self.train_iterator = _make_iterator(
+        self.train_loader = _make_loader(
             train_dataset,
             model.config.padding_idx,
             model.config.ignored_idx,
-            config.batch_size,
-            config.shuffle
+            config,
+            shuffle=config.shuffle
         )
-        self.train_iterator = _make_iterator(
+        self.validation_loader = _make_loader(
             validation_dataset,
             model.config.padding_idx,
             model.config.ignored_idx,
-            config.batch_size,
-            config.shuffle
+            config,
+            shuffle=False
         )
+        self.train_iterator = iter(self.train_loader)
+        self.validation_iterator = iter(self.validation_loader)
 
-        self.samples_seen = 0
+        if config.compile:
+            self.model = torch.compile(self.model)
 
         self.ctx = (
             contextlib.nullcontext()
-            if self.device.type == "cpu"
+            if device.type == "cpu"
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
 
     def get_next_batch(self, mode="train"):
         if mode == "train":
             iterator = self.train_iterator
-            loader = self.train_loader
         elif mode == "validation":
             iterator = self.validation_iterator
-            loader = self.validation_loader
         else:
-            raise ValueError(f"Unknown mode: {mode}")
+            raise ValueError(f"Unknown mode '{mode}', expected 'train' or 'validation'")
 
         try:
             return next(iterator)
         except StopIteration:
             logger.info(f"Exhausted {mode} iterator epoch, restarting from beginning")
-            new_iterator = iter(loader)
 
             if mode == "train":
+                new_iterator = iter(self.train_loader)
                 self.train_iterator = new_iterator
             else:
+                new_iterator = iter(self.validation_loader)
                 self.validation_iterator = new_iterator
 
             return next(new_iterator)
@@ -194,8 +212,8 @@ class Trainer:
         for _ in range(self.config.gradient_acc_steps):
             batch = self.get_next_batch("train")
             batch = self.prepare_batch(batch)
-            
-            self.samples_seen += batch["y"].shape[0]
+
+            self.samples_seen += batch["y"].size(0)
 
             with self.ctx:
                 _, loss = self.model(**batch)
@@ -210,3 +228,37 @@ class Trainer:
         self.optimizer.zero_grad(set_to_none=True)
 
         return total_loss
+
+    def crossed_interval(self, interval):
+        this_iter = self.samples_seen // interval
+        prev_iter = (self.samples_seen - interval) // self.config.batch_size
+        return this_iter > prev_iter
+
+    def train(self, n_samples):
+        self.model.train()
+
+        recent_losses = collections.deque(maxlen=self.config.log_interval)
+        n_iter = n_samples // self.config.batch_size
+        samples_seen_prev = 0
+        t0 = time.time()
+
+        for i in range(n_iter):
+            loss = self.take_optimisation_step()
+            recent_losses.append(loss)
+
+            if self.crossed_interval(self.config.log_interval):
+                t1 = time.time()
+                took = t1 - t0
+                t0 = t1
+
+                samples_per_sec = (self.samples_seen - samples_seen_prev) / took
+                samples_seen_prev = self.samples_seen
+
+                logger.info(
+                    f"iter: {i} | samples: {self.samples_seen} | "
+                    f"loss: {np.mean(recent_losses)} | "
+                    f"samples / s: {int(samples_per_sec)}"
+                )
+
+            if self.crossed_interval(self.config.validation_interval):
+                pass
