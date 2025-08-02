@@ -84,12 +84,7 @@ class ChatMLPreprocessor:
         return result
 
     def decode_tokens_to_conversation(self, token_ids):
-        """
-        Decode token IDs back to conversation format.
-
-        This is the key method that replaces the brittle token-level parsing.
-        We decode to text first, then parse the ChatML structure.
-        """
+        """Decode token IDs back to conversation format"""
         if isinstance(token_ids, torch.Tensor):
             if token_ids.dim() > 1:
                 if token_ids.size(0) > 1:
