@@ -82,7 +82,7 @@ class SFTValidator(BaseValidator):
         samples = []
 
         for prompt in self.trainer_config.sample_prompts:
-            
+
             user_conversation = text_util.make_user_conversation(prompt)
             processed = self.preprocessor(user_conversation, return_labels=False)
             x = processed["input_ids"]

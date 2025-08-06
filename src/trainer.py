@@ -9,6 +9,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from src.validation import SFTValidator
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,9 +109,10 @@ def _configure_optimizer(model, weight_decay, learning_rate, betas):
     return optimizer, params
 
 
-def _make_loader(dataset, padding_idx, ignored_idx, config, shuffle=False):
+def _make_loader(
+    dataset, padding_idx, ignored_idx, config, micro_batch_size, shuffle=False
+):
     collator = _SFTCollator(padding_idx, ignored_idx)
-    micro_batch_size = config.batch_size // config.gradient_acc_steps
     loader = DataLoader(
         dataset,
         batch_size=micro_batch_size,
@@ -122,6 +125,40 @@ def _make_loader(dataset, padding_idx, ignored_idx, config, shuffle=False):
     return iter(loader)
 
 
+def _print_train_results(iter_, samples_seen, avg_loss, lr, samples_per_sec):
+    print(
+        f"🔄 iter: {iter_:>6,} │ "
+        f"📊 samples: {samples_seen:>8,} │ "
+        f"📉 loss: {avg_loss:>7.4f} │ "
+        f"📈 lr: {lr:>9.2e} │ "
+        f"⚡ {int(samples_per_sec):>4,} samples/s"
+    )
+
+
+def _print_validation_results(metrics, samples, samples_seen):
+    print("\n" + "="*80)
+    print("VALIDATION RESULTS")
+    print("="*80)
+
+    print(f"📊 METRICS (samples seen: {samples_seen:,})")
+    print("-" * 40)
+    print(f"  Loss:       {metrics['loss']:.4f}")
+    print(f"  Accuracy:   {metrics['accuracy']:.1%}")
+    print(f"  Perplexity: {metrics['perplexity']:.2f}")
+    print()
+
+    print("🤖 SAMPLE COMPLETIONS")
+    print("-" * 40)
+    for i, sample in enumerate(samples, 1):
+        print(f"\n[Sample {i}]")
+        print(f"Prompt: {sample['prompt']}")
+        print(f"Response: {sample['completion']}")
+        if i < len(samples):
+            print("-" * 30)
+    
+    print("\n" + "="*80 + "\n")
+
+
 class Trainer:
     def __init__(
         self, config, model, tokenizer, train_dataset, validation_dataset, device
@@ -131,6 +168,7 @@ class Trainer:
         self.tokenizer = tokenizer
         self.device = device
 
+        self.micro_batch_size = config.batch_size // config.gradient_acc_steps
         self.samples_seen = 0
 
         optimizer, trainable_params = _configure_optimizer(
@@ -144,6 +182,7 @@ class Trainer:
             model.config.padding_idx,
             model.config.ignored_idx,
             config,
+            self.micro_batch_size,
             shuffle=config.shuffle
         )
         self.validation_loader = _make_loader(
@@ -151,6 +190,7 @@ class Trainer:
             model.config.padding_idx,
             model.config.ignored_idx,
             config,
+            self.micro_batch_size,
             shuffle=False
         )
         self.train_iterator = iter(self.train_loader)
@@ -165,7 +205,21 @@ class Trainer:
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
 
-    def get_next_batch(self, mode="train"):
+        prevent_token_ids = [
+            tokenizer.im_start_token_id,
+            tokenizer.pad_token_id
+        ]
+        self.validator = SFTValidator(
+            self.model,
+            self.tokenizer, 
+            self.config,
+            self.ctx,
+            device,
+            prevent_tokens=prevent_token_ids,
+            stop_token=tokenizer.im_end_token_id,
+        )
+
+    def _get_next_batch(self, mode="train"):
         if mode == "train":
             iterator = self.train_iterator
         elif mode == "validation":
@@ -187,10 +241,10 @@ class Trainer:
 
             return next(new_iterator)
 
-    def prepare_batch(self, batch):
+    def _prepare_batch(self, batch):
         return {k: t.to(self.device, non_blocking=True) for k, t in batch.items()}
 
-    def set_optimizer_lr(self):
+    def _set_optimizer_lr(self):
         lr = _get_learning_rate_stepwise(
             self.samples_seen,
             base_lr=self.config.base_learning_rate,
@@ -201,17 +255,17 @@ class Trainer:
         for pg in self.optimizer.param_groups:
             pg["lr"] = lr
 
-    # def get_current_lr(self):
-    #     return self.optimizer.param_groups[0]["lr"]
+    def get_current_lr(self):
+        return self.optimizer.param_groups[0]["lr"]
 
-    def take_optimisation_step(self):
+    def _take_optimisation_step(self):
         total_loss = 0
 
-        self.set_optimizer_lr()
+        self._set_optimizer_lr()
 
         for _ in range(self.config.gradient_acc_steps):
-            batch = self.get_next_batch("train")
-            batch = self.prepare_batch(batch)
+            batch = self._get_next_batch("train")
+            batch = self._prepare_batch(batch)
 
             self.samples_seen += batch["y"].size(0)
 
@@ -229,7 +283,7 @@ class Trainer:
 
         return total_loss
 
-    def crossed_interval(self, interval):
+    def _crossed_interval(self, interval):
         this_iter = self.samples_seen // interval
         prev_iter = (self.samples_seen - interval) // self.config.batch_size
         return this_iter > prev_iter
@@ -243,10 +297,10 @@ class Trainer:
         t0 = time.time()
 
         for i in range(n_iter):
-            loss = self.take_optimisation_step()
+            loss = self._take_optimisation_step()
             recent_losses.append(loss)
 
-            if self.crossed_interval(self.config.log_interval):
+            if self._crossed_interval(self.config.log_interval):
                 t1 = time.time()
                 took = t1 - t0
                 t0 = t1
@@ -254,11 +308,27 @@ class Trainer:
                 samples_per_sec = (self.samples_seen - samples_seen_prev) / took
                 samples_seen_prev = self.samples_seen
 
-                logger.info(
-                    f"iter: {i} | samples: {self.samples_seen} | "
-                    f"loss: {np.mean(recent_losses)} | "
-                    f"samples / s: {int(samples_per_sec)}"
+                _print_train_results(
+                    i,
+                    self.samples_seen,
+                    np.mean(recent_losses),
+                    self.get_current_lr(),
+                    samples_per_sec
                 )
 
-            if self.crossed_interval(self.config.validation_interval):
-                pass
+            if self._crossed_interval(self.config.validation_interval):
+                metrics, samples = self.validate()
+                _print_validation_results(metrics, samples, self.samples_seen)
+
+    def validate(self):
+        all_batch_metrics = []
+        n_iter = self.config.validation_samples // self.micro_batch_size
+        for _ in range(n_iter):
+            batch = self._get_next_batch("validation")
+            batch = self._prepare_batch(batch)
+            batch_metrics = self.validator.compute_batch_metrics(batch)
+            all_batch_metrics.append(batch_metrics)
+        
+        metrics = self.validator.aggregate_metrics(all_batch_metrics)
+        samples = self.validator.generate_samples()
+        return metrics, samples
