@@ -13,10 +13,13 @@ class ChatMLPreprocessor:
             tokenizer.model_max_length if max_length is None else max_length
         )
 
-    def __call__(self, conversation, return_labels=True):
-        return self.encode_conversation_to_tokens(conversation, return_labels)
+    def __call__(self, conversation, for_generation=False):
+        if for_generation:
+            return self.encode_conversation_for_generation_to_tokens(conversation)
+        return self.encode_conversation_to_tokens(conversation)
+        
 
-    def encode_conversation_to_tokens(self, conversation, return_labels):
+    def encode_conversation_to_tokens(self, conversation):
         """
         Convert conversation to tokenized ChatML format for training.
 
@@ -25,7 +28,7 @@ class ChatMLPreprocessor:
             return_labels: Whether to return labels for loss computation
             
         Returns:
-            {"input_ids": [...], "labels": [...]} (labels only if return_labels=True)
+            {"input_ids": [...], "labels": [...]}
         """
         self._validate_conversation(conversation)
 
@@ -40,17 +43,58 @@ class ChatMLPreprocessor:
             input_ids.extend(msg_ids)
             labels.extend(msg_labels)
 
+        # shift labels by one position for next-token prediction
+        labels = labels[1:] + [self.ignored_idx]
+
         input_ids = input_ids[:self.max_length]
+        labels = labels[:self.max_length]
 
-        result = {"input_ids": input_ids}
+        return {"input_ids": input_ids, "labels": labels}
 
-        if return_labels:
-            # shift labels by one position for next-token prediction
-            labels = labels[1:] + [self.ignored_idx]
-            labels = labels[:self.max_length]
-            result["labels"] = labels
+    def encode_conversation_for_generation_to_tokens(self, conversation):
+        """
+        Convert conversation to tokenized ChatML format for generation.
 
-        return result
+        The conversation must end with an assistant message, which can have empty
+        content ("", None).
+        The final assistant message will be left incomplete (no <|im_end|> token) 
+        to prompt the model to continue generation.
+
+        Args:
+            conversation: {"messages": [{"role": "user|assistant", "content": "..."}]}
+
+        Returns:
+            {"input_ids": [...]}
+        """
+        self._validate_conversation(conversation)
+
+        if len(conversation["messages"]) < 2:
+            raise ValueError(
+                f"Conversation must contain at least two messages (user, assistant), "
+                f"got {len(conversation['messages'])}"
+            )
+
+        if conversation["messages"][-1]["role"] != "assistant":
+            raise ValueError(
+                "Conversation must end with assistant message for generation"
+            )
+
+        input_ids = []
+        messages = conversation["messages"]
+
+        # process all messages except the last one normally
+        for msg in messages[:-1]:
+            role, content = msg["role"], msg["content"]
+            msg_ids, _ = self._encode_message(role, content)
+            input_ids.extend(msg_ids)
+
+        # process the final assistant message for generation
+        role, content = messages[-1]["role"], messages[-1]["content"]
+        msg_ids = self._encode_message_for_generation(role, content)
+        input_ids.extend(msg_ids)
+
+        input_ids = input_ids[:self.max_length]
+        return {"input_ids": input_ids}
 
     def decode_tokens_to_conversation(self, token_ids):
         """Decode token IDs back to conversation format"""
@@ -109,13 +153,46 @@ class ChatMLPreprocessor:
         labels.append(self.ignored_idx)
 
         return ids, labels
-    
+
+    def _encode_message_for_generation(self, role, content):
+        """
+        Encode a message for generation: No <|im_end|> token or trailing newline.
+
+        This method is specifically for the final assistant message in generation,
+        leaving it incomplete so the model continues from there.
+        """
+        if role != "assistant":
+            raise ValueError("Generation encoding only supports assistant messages")
+
+        ids = []
+
+        # <|im_start|>
+        ids.append(self.tokenizer.im_start_token_id)
+
+        # role
+        role_tokens = self.tokenizer.encode(role, add_special_tokens=False)
+        ids.extend(role_tokens)
+
+        # \n
+        ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
+
+        # content (if any)
+        if content:
+            content_tokens = self.tokenizer.encode(
+                content, add_special_tokens=False, truncation=True, max_length=self.max_length
+            )
+            ids.extend(content_tokens)
+
+        return ids
+
     def _parse_chatml_text(self, chatml_text):
         """
         Parse ChatML formatted text back into conversation format.
 
         Uses regex to robustly extract role and content from each message block.
         """
+        print("CHATML TEXT", chatml_text)
+
         esc_start = re.escape(self.tokenizer.im_start_token)
         esc_end = re.escape(self.tokenizer.im_end_token)
 

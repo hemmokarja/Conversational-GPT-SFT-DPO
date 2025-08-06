@@ -87,7 +87,7 @@ class SFTValidator(BaseValidator):
         for prompt in self.trainer_config.sample_prompts:
 
             user_conversation = text_util.make_user_conversation(prompt)
-            processed = self.preprocessor(user_conversation, return_labels=False)
+            processed = self.preprocessor(user_conversation, for_generation=True)
             x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
 
             with self.ctx, torch.no_grad():
