@@ -86,7 +86,7 @@ class ChatMLPreprocessor:
         
         for msg in conversation["messages"]:
             role, content = msg["role"], msg["content"]
-            
+
             # <|im_start|>role\ncontent<|im_end|>\n
             msg_ids, msg_labels = self._encode_message(role, content)
             input_ids.extend(msg_ids)

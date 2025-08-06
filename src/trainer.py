@@ -2,7 +2,7 @@ import contextlib
 import collections
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Optional, List
 
 import numpy as np
@@ -14,13 +14,13 @@ from src.validation import SFTValidator
 logger = logging.getLogger(__name__)
 
 
-@dataclass()
+@dataclass
 class TrainerConfig:
     batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
     validation_samples: int = 1000
     validation_interval: int = 1000
-    sample_prompts: List[str] = []
+    sample_prompts: List[str] = field(default_factory=list)
     log_interval: int = 100
     compile: bool = True
     base_learning_rate: float = 3e-4
@@ -30,8 +30,8 @@ class TrainerConfig:
     weight_decay: float = 1e-5
     betas: Tuple[float] = (0.9, 0.95)
     grad_clip: float = 1.2
-    num_workers: Optional[int] = None
-    prefetch_factor: int = 0
+    num_workers: Optional[int] = 0
+    prefetch_factor: int = None
     pin_memory: bool = False
 
     def __post_init__(self):
@@ -60,7 +60,7 @@ class _SFTCollator:
 
             padded_input = item["input_ids"] + [self.padding_idx] * pad_len
             padded_labels = item["labels"] + [self.ignored_idx] * pad_len
-            valid_mask = [1] * seq_len + [0] * pad_len
+            valid_mask = [True] * seq_len + [False] * pad_len
 
             input_ids.append(padded_input)
             labels.append(padded_labels)
@@ -183,7 +183,7 @@ class Trainer:
             model.config.ignored_idx,
             config,
             self.micro_batch_size,
-            shuffle=config.shuffle
+            shuffle=True
         )
         self.validation_loader = _make_loader(
             validation_dataset,
@@ -289,6 +289,8 @@ class Trainer:
         return this_iter > prev_iter
 
     def train(self, n_samples):
+        logger.info(f"Staring model training for {n_samples} samples...")
+
         self.model.train()
 
         recent_losses = collections.deque(maxlen=self.config.log_interval)
@@ -319,8 +321,11 @@ class Trainer:
             if self._crossed_interval(self.config.validation_interval):
                 metrics, samples = self.validate()
                 _print_validation_results(metrics, samples, self.samples_seen)
+        
+        logger.info("Finished model training.")
 
     def validate(self):
+        self.model.eval()
         all_batch_metrics = []
         n_iter = self.config.validation_samples // self.micro_batch_size
         for _ in range(n_iter):
@@ -331,4 +336,5 @@ class Trainer:
         
         metrics = self.validator.aggregate_metrics(all_batch_metrics)
         samples = self.validator.generate_samples()
+        self.model.train()
         return metrics, samples

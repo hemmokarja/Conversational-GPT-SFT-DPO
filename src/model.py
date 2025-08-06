@@ -119,13 +119,13 @@ def _get_causal_attn_mask(seq_len, device):
     return causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, S, S]
 
 
-def _get_from_to_attn_mask(non_pad_mask):
+def _get_from_to_attn_mask(valid_mask):
     # prevent attending *to* pad tokens
-    to_mask = non_pad_mask.unsqueeze(1)  # [B, 1, S]
+    to_mask = valid_mask.unsqueeze(1)  # [B, 1, S]
     # prevent attending *from* pad tokens (= generate outputs for padding tokens)
-    from_mask = non_pad_mask.unsqueeze(2)  # [B, S, 1]
+    from_mask = valid_mask.unsqueeze(2)  # [B, S, 1]
     from_to_mask = from_mask & to_mask  # [B, S, S]
-    return from_to_mask.unsqueeze(1)  # [B, 1, S, S]
+    return from_to_mask.unsqueeze(1).bool()  # [B, 1, S, S]
 
 
 def _get_combined_attn_mask(seq_len, valid_mask, device):
@@ -388,8 +388,8 @@ class LoRALinear(nn.Module):
         x_base = F.linear(x, self.weight, self.bias)  # [*, out_features]
 
         x_lora = self.dropout(x) if self.training else x
-        x_lora = F.linear(x, self.lora_A.T)  # [*, r]
-        x_lora = F.linear(x_lora, self.lora_B.T) # [*, out_features]
+        x_lora = F.linear(x, self.lora_A)  # [*, r]
+        x_lora = F.linear(x_lora, self.lora_B) # [*, out_features]
         x_lora = x_lora * self.scale
 
         return x_base + x_lora
