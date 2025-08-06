@@ -66,11 +66,14 @@ class SFTValidator(BaseValidator):
         with self.ctx, torch.no_grad():
             logits, loss = self.model(**batch)  # [B, S, vocab], scalar
 
-        valid_mask = batch["valid_mask"]  # TODO off by one? valid_mask for attention
-        predictions = logits.argmax(dim=-1)  # [B, S]
-        correct = (predictions == batch["y"]) & valid_mask
+        preds = logits.argmax(dim=-1)  # [B, S]
 
-        accuracy = correct.sum().item() / valid_mask.sum().item()
+        preds_flat = preds.view(-1)
+        y_flat = batch["y"].view(-1)
+
+        mask = y_flat != self.model.config.ignored_idx
+        correct = (y_flat == preds_flat) & mask
+        accuracy = correct.sum().item() / mask.sum().item()
 
         return {
             "loss": loss.item(),
