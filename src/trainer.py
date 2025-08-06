@@ -37,7 +37,7 @@ class TrainerConfig:
             raise ValueError("batch_size must be divisible by gradient_acc_steps")
 
 
-class _Collator:
+class _SFTCollator:
     def __init__(self, padding_idx, ignored_idx=-100):
         if padding_idx is None or ignored_idx is None:
             raise ValueError("padding_idx or ignored_idx must not be None")
@@ -51,7 +51,7 @@ class _Collator:
         input_ids = []
         labels = []
         valid_masks = []
-        
+
         for item in batch:
             seq_len = len(item["input_ids"])
             pad_len = max_len - seq_len
@@ -108,7 +108,7 @@ def _configure_optimizer(model, weight_decay, learning_rate, betas):
 
 
 def _make_loader(dataset, padding_idx, ignored_idx, config, shuffle=False):
-    collator = _Collator(padding_idx, ignored_idx)
+    collator = _SFTCollator(padding_idx, ignored_idx)
     micro_batch_size = config.batch_size // config.gradient_acc_steps
     loader = DataLoader(
         dataset,

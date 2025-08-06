@@ -68,8 +68,7 @@ class ChatMLPreprocessor:
             # <|im_start|>role\ncontent<|im_end|>\n
             msg_ids, msg_labels = self._encode_message(role, content)
             input_ids.extend(msg_ids)
-            if return_labels:
-                labels.extend(msg_labels)
+            labels.extend(msg_labels)
 
         input_ids = input_ids[:self.max_length]
 
@@ -98,31 +97,31 @@ class ChatMLPreprocessor:
         conversation = self._parse_chatml_text(chatml_text)
         self._validate_conversation(conversation)
         return conversation
-    
+
     def _encode_message(self, role, content):
         """Encode a single message into token IDs and labels."""
         ids = []
         labels = []
-        
+
         # <|im_start|>
         ids.append(self.tokenizer.im_start_token_id)
         labels.append(self.ignored_idx)
-        
+
         # role
         role_tokens = self.tokenizer.encode(role, add_special_tokens=False)
         ids.extend(role_tokens)
         labels.extend([self.ignored_idx] * len(role_tokens))
-        
+
         # \n
         ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
         labels.append(self.ignored_idx)
-        
+
         # content
         content_tokens = self.tokenizer.encode(
             content, add_special_tokens=False, truncation=True, max_length=self.max_length
         )
         ids.extend(content_tokens)
-        
+
         if role == "assistant":
             labels.extend(content_tokens)
         else:
@@ -152,11 +151,11 @@ class ChatMLPreprocessor:
 
         pattern = rf"{esc_start}\s*(\w+)\n(.*?){esc_end}"
         matches = re.findall(pattern, chatml_text, flags=re.DOTALL)
-        
+
         messages = []
         for role, content in matches:
             messages.append({"role": role, "content": content.strip()})
-    
+
         return {"messages": messages}
     
     def _validate_conversation(self, conversation):
