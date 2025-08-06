@@ -3,7 +3,7 @@ from collections import defaultdict
 import datasets
 from datasets import Dataset
 
-from src.text_util import ChatMLPreprocessor
+from src.chatml import ChatMLPreprocessor
 
 
 def _parse_valid_conversations_from_tree(

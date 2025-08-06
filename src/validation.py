@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from src import text_util
-from src.text_util import ChatMLPreprocessor
+from src.chatml import ChatMLPreprocessor
 
 
 class BaseValidator(ABC):    
