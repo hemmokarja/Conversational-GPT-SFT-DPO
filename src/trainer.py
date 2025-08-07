@@ -285,7 +285,8 @@ class Trainer:
 
     def _crossed_interval(self, interval):
         this_iter = self.samples_seen // interval
-        prev_iter = (self.samples_seen - interval) // self.config.batch_size
+        prev_iter = (self.samples_seen - self.config.batch_size) // interval
+        prev_iter = max(prev_iter, 0)
         return this_iter > prev_iter
 
     def train(self, n_samples):

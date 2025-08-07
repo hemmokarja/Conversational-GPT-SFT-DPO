@@ -407,10 +407,13 @@ class FineTuneableGPT2(GPT2):
         model.load_state_dict(base_model.state_dict())
         return model
 
-    def extend_vocabulary(self, new_vocab_size):
+    def extend_vocabulary(self, new_vocab_size, init_from_index=None):
         """
         Extends the token embedding and lm_head projection layers to match
         new_vocab_size. Must be called after tokenizer has been expanded.
+
+        If init_from_index is provided, extended embeddings are initialized with
+        the embedding of that index.
         """
         old_vocab_size, n_embd = self.transformer.wte.weight.shape
         if new_vocab_size <= old_vocab_size:
@@ -420,10 +423,25 @@ class FineTuneableGPT2(GPT2):
         self.new_token_indices = list(range(old_vocab_size, new_vocab_size))
 
         new_wte = nn.Embedding(new_vocab_size, n_embd)
+
         new_wte.weight.data[:old_vocab_size] = self.transformer.wte.weight.data
-        new_wte.weight.data[old_vocab_size:] = (
-            torch.randn((new_vocab_size - old_vocab_size, n_embd)) * 0.02
-        )
+
+        std = self.transformer.wte.weight.data.std()
+        if init_from_index is not None:
+            init_embedding = self.transformer.wte.weight.data[init_from_index].clone()
+            new_wte.weight.data[old_vocab_size:] = (
+                init_embedding.unsqueeze(0).expand(len(self.new_token_indices), -1)
+            )
+            new_wte.weight.data[old_vocab_size:] += (
+                torch.randn(len(self.new_token_indices), n_embd) * std * 0.01
+            )
+        else:
+            # random initialization
+            mean = self.transformer.wte.weight.data.mean()
+            new_wte.weight.data[old_vocab_size:] = (
+                torch.randn((new_vocab_size - old_vocab_size, n_embd)) * std + mean
+            )
+
         self.transformer.wte = new_wte
 
         self.lm_head = nn.Linear(n_embd, new_vocab_size, bias=False)

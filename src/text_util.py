@@ -45,7 +45,6 @@ def get_last_assistant_message_content(conversation):
 
 
 def add_assistant_message(conversation, assistant_content):
-    # TODO is this needed?
     # add an assistant message to an existing conversation
     messages = conversation["messages"] + [
         {"role": "assistant", "content": assistant_content}

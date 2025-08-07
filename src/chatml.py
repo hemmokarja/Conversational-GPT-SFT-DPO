@@ -191,7 +191,6 @@ class ChatMLPreprocessor:
 
         Uses regex to robustly extract role and content from each message block.
         """
-        print("CHATML TEXT", chatml_text)
 
         esc_start = re.escape(self.tokenizer.im_start_token)
         esc_end = re.escape(self.tokenizer.im_end_token)
