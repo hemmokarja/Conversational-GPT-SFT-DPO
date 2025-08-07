@@ -113,7 +113,7 @@ def _make_loader(
     dataset, padding_idx, ignored_idx, config, micro_batch_size, shuffle=False
 ):
     collator = _SFTCollator(padding_idx, ignored_idx)
-    loader = DataLoader(
+    return DataLoader(
         dataset,
         batch_size=micro_batch_size,
         num_workers=config.num_workers,
@@ -122,7 +122,6 @@ def _make_loader(
         shuffle=shuffle,
         collate_fn=collator
     )
-    return iter(loader)
 
 
 def _print_train_results(iter_, samples_seen, avg_loss, lr, samples_per_sec):
@@ -233,13 +232,11 @@ class Trainer:
             logger.info(f"Exhausted {mode} iterator epoch, restarting from beginning")
 
             if mode == "train":
-                new_iterator = iter(self.train_loader)
-                self.train_iterator = new_iterator
+                self.train_iterator = iter(self.train_loader)
+                return next(self.train_iterator)
             else:
-                new_iterator = iter(self.validation_loader)
-                self.validation_iterator = new_iterator
-
-            return next(new_iterator)
+                self.validation_iterator = iter(self.validation_loader)
+                return next(self.validation_iterator)
 
     def _prepare_batch(self, batch):
         return {k: t.to(self.device, non_blocking=True) for k, t in batch.items()}
@@ -322,6 +319,7 @@ class Trainer:
             if self._crossed_interval(self.config.validation_interval):
                 metrics, samples = self.validate()
                 _print_validation_results(metrics, samples, self.samples_seen)
+                t0 = time.time()
         
         logger.info("Finished model training.")
 
