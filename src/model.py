@@ -362,8 +362,11 @@ class LoRALinear(nn.Module):
         self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
 
-        self.lora_A = nn.Parameter(torch.randn(r, in_features) * 0.02)
-        self.lora_B = nn.Parameter(torch.zeros(out_features, r))
+        self.lora_A = nn.Parameter(torch.empty(r, in_features))
+        self.lora_B = nn.Parameter(torch.empty(out_features, r))
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_B)
+
         self.dropout = nn.Dropout(dropout)
 
     @classmethod
@@ -529,21 +532,21 @@ class FineTuneableGPT2(GPT2):
         - Keep new token embeddings trainable (but not padding token)
         - Freeze everything else
         """
+        make_emb_grad_mask = False
         for name, param in self.named_parameters():
             if "lora_" in name:
                 param.requires_grad = True
                 continue
             
             if "transformer.wte.weight" in name:
-                # if new tokens, allow grads by default, but freeze selectively with
-                # hooks; otherwise, freeze all embeddings
+                # if new tokens, allow grads by default
                 trainable_new_tokens = [
                     idx for idx in self.new_token_indices 
                     if self.config.padding_idx is None or idx != self.config.padding_idx
                 ]
                 if trainable_new_tokens:
                     param.requires_grad = True
-                    self._register_selective_embedding_hook()
+                    make_emb_grad_mask = True
                 else:
                     logger.info("No new trainable tokens, freezing all embeddings")
                     param.requires_grad = False
@@ -554,38 +557,25 @@ class FineTuneableGPT2(GPT2):
                 continue
 
             param.requires_grad = False
-            
+
+        if make_emb_grad_mask:
+           self._make_wte_grad_mask()
+
         logger.info(
             "Applied selective parameter freezing for LoRA and new token embeddings"
         )
 
-    def _register_selective_embedding_hook(self):
+    def _make_wte_grad_mask(self):
         """
-        Register a backward hook to selectively compute gradients only for new token
-        embeddings (excluding padding token)
+        Build mask that can be applied to selectively zero out embedding gradients for
+        all old tokens. This avoids having to register hooks to embedding tensors, which
+        can be unstable.
         """
-        def selective_embedding_hook(grad):
-            if grad is None:
-                return grad
-
-            mask = torch.zeros_like(grad, dtype=torch.bool)
-
-            for idx in self.new_token_indices:
-                if self.config.padding_idx is None or idx != self.config.padding_idx:
-                    mask[idx] = True
-
-            return grad * mask.float()
-
-        self.transformer.wte.weight.register_hook(selective_embedding_hook)
-
-        trainable_new_tokens = [
-            idx for idx in self.new_token_indices 
-            if self.config.padding_idx is None or idx != self.config.padding_idx
-        ]
-        logger.info(
-            f"Registered selective gradient hook for "
-            f"{len(trainable_new_tokens)} new tokens"
-        )
+        mask = torch.zeros_like(self.transformer.wte.weight)
+        for idx in self.new_token_indices:
+            if idx != self.config.padding_idx:
+                mask[idx] = 1.0
+        self.register_buffer("wte_grad_mask", mask)
 
     def get_optimizer_parameters(self):
         """

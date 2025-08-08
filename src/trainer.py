@@ -272,6 +272,12 @@ class Trainer:
                 loss.backward()
                 total_loss += loss.item()
 
+        # for LoRA
+        if hasattr(self.model, "wte_grad_mask"):
+            wte_grad = self.model.transformer.wte.weight.grad
+            if wte_grad is not None:
+                wte_grad.mul_(self.model.wte_grad_mask)
+
         if self.config.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.trainable_params, self.config.grad_clip)
 
@@ -288,6 +294,9 @@ class Trainer:
 
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
+
+        metrics, samples = self.validate()
+        _print_validation_results(metrics, samples, self.samples_seen)        
 
         self.model.train()
 
