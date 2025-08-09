@@ -106,7 +106,7 @@ concepts, design patterns, and design strategies.
 
 ----
 
-Perfect? Nope. Factual? Weeell, that’s a stretch. Improvement? Absolutely :)
+Perfect? Nope. Factual? Weeell, that’s a stretch. Improvement? You be the judge :)
 
 ## 📝 License
 
