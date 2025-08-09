@@ -473,11 +473,4 @@ class FineTuneableGPT2(GPT2):
                 param.requires_grad = False
 
     def get_optimizer_parameters(self):
-        """
-        Get parameters that should be passed to the optimizer.
-
-        Returns parameters where requires_grad=True. Note that for embeddings,
-        even though requires_grad=True, the backward hook ensures only new tokens
-        receive gradient updates.
-        """
         return [param for param in self.parameters() if param.requires_grad]
