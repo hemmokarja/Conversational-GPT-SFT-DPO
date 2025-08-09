@@ -166,7 +166,7 @@ class Trainer:
         self, config, model, tokenizer, train_dataset, validation_dataset, device
     ):
         self.config = config
-        self.model = model
+        self.model = model.to(device)
         self.tokenizer = tokenizer
         self.device = device
 
