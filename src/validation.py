@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from src import text_util
-from src.chatml import ChatMLPreprocessor
+from src.preprocess import ConversationPreprocessor
 
 
 def _make_conversation_for_sample_generation(user_prompt):
@@ -22,7 +22,7 @@ class BaseValidator(ABC):
         ctx,
         device,
         prevent_tokens=None,
-        stop_token=None,
+        stop_tokens=None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -30,9 +30,11 @@ class BaseValidator(ABC):
         self.ctx = ctx
         self.device = device
         self.prevent_tokens = prevent_tokens
-        self.stop_token = stop_token
+        self.stop_tokens = stop_tokens
 
-        self.preprocessor = ChatMLPreprocessor(tokenizer, model.config.ignored_idx)
+        self.preprocessor = ConversationPreprocessor(
+            tokenizer, model.config.ignored_idx
+        )
 
     @abstractmethod
     def compute_batch_metrics(self, batch):
@@ -62,10 +64,10 @@ class SFTValidator(BaseValidator):
         ctx,
         device,
         prevent_tokens=None,
-        stop_token=None,
+        stop_tokens=None,
     ):
         super().__init__(
-            model, tokenizer, trainer_config, ctx, device, prevent_tokens, stop_token
+            model, tokenizer, trainer_config, ctx, device, prevent_tokens, stop_tokens
         )
 
     def compute_batch_metrics(self, batch):
@@ -102,7 +104,7 @@ class SFTValidator(BaseValidator):
                     max_tokens=100,  # TODO config
                     temperature=1.0,  # TODO config
                     top_k=50,  # TODO config
-                    stop_token=self.stop_token,
+                    stop_tokens=self.stop_tokens,
                     prevent_tokens=self.prevent_tokens,
                 )
 

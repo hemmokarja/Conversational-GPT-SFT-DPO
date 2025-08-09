@@ -203,18 +203,14 @@ class Trainer:
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
 
-        prevent_token_ids = [
-            tokenizer.im_start_token_id,
-            tokenizer.pad_token_id
-        ]
         self.validator = SFTValidator(
             self.model,
             self.tokenizer, 
             self.config,
             self.ctx,
             device,
-            prevent_tokens=prevent_token_ids,
-            stop_token=tokenizer.im_end_token_id,
+            prevent_tokens=[tokenizer.pad_token_id],
+            stop_tokens=tokenizer.encode("!END"),
         )
 
     def _get_next_batch(self, mode="train"):
@@ -270,12 +266,6 @@ class Trainer:
                 loss = loss / self.config.gradient_acc_steps
                 loss.backward()
                 total_loss += loss.item()
-
-        # for LoRA
-        if hasattr(self.model, "wte_grad_mask"):
-            wte_grad = self.model.transformer.wte.weight.grad
-            if wte_grad is not None:
-                wte_grad.mul_(self.model.wte_grad_mask)
 
         if self.config.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.trainable_params, self.config.grad_clip)

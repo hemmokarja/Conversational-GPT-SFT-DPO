@@ -204,6 +204,7 @@ class GPT2(nn.Module):
 
         if y is not None:
             logits = self.lm_head(emb)  # [B, S, vocab]
+            logits = _apply_token_restrictions(logits, prevent_tokens)
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 y.view(-1),
@@ -211,11 +212,15 @@ class GPT2(nn.Module):
             )
         else:
             logits = self.lm_head(emb[:, [-1], :])  # [B, 1, vocab]
+            logits = _apply_token_restrictions(logits, prevent_tokens)
             loss = None
 
-        logits = _apply_token_restrictions(logits, prevent_tokens)
-
         return logits, loss
+
+    @staticmethod
+    def _should_stop(x, stop_tokens):
+        n = len(stop_tokens)
+        return x.view(-1)[-n:].cpu().tolist() == stop_tokens
 
     @torch.no_grad()
     def generate(
@@ -224,7 +229,7 @@ class GPT2(nn.Module):
         max_tokens,
         temperature=1.0,
         top_k=None,
-        stop_token=None,
+        stop_tokens=None,  # list of token ids
         prevent_tokens=None,
     ):
         if x.dim() != 2:
@@ -246,7 +251,7 @@ class GPT2(nn.Module):
             x_next = torch.multinomial(probs, num_samples=1)  # [B, 1]
             x = torch.cat((x, x_next), dim=1)  # [B, S + 1]
 
-            if stop_token is not None and x_next.item() == stop_token:
+            if stop_tokens is not None and self._should_stop(x, stop_tokens):
                 break
 
         return x
@@ -410,82 +415,17 @@ class FineTuneableGPT2(GPT2):
         model.load_state_dict(base_model.state_dict())
         return model
 
-    def extend_vocabulary(self, new_vocab_size, init_from_index=None):
-        """
-        Extends the token embedding and lm_head projection layers to match
-        new_vocab_size. Must be called after tokenizer has been expanded.
-
-        If init_from_index is provided, extended embeddings are initialized with
-        the embedding of that index.
-        """
-        old_vocab_size, n_embd = self.transformer.wte.weight.shape
-        if new_vocab_size <= old_vocab_size:
-            logger.warning(f"Nothing to do: {new_vocab_size=} <= {old_vocab_size=}")
-            return
-
-        self.new_token_indices = list(range(old_vocab_size, new_vocab_size))
-
-        new_wte = nn.Embedding(new_vocab_size, n_embd)
-
-        new_wte.weight.data[:old_vocab_size] = self.transformer.wte.weight.data
-
-        std = self.transformer.wte.weight.data.std()
-        if init_from_index is not None:
-            init_embedding = self.transformer.wte.weight.data[init_from_index].clone()
-            new_wte.weight.data[old_vocab_size:] = (
-                init_embedding.unsqueeze(0).expand(len(self.new_token_indices), -1)
-            )
-            new_wte.weight.data[old_vocab_size:] += (
-                torch.randn(len(self.new_token_indices), n_embd) * std * 0.01
-            )
-        else:
-            # random initialization
-            mean = self.transformer.wte.weight.data.mean()
-            new_wte.weight.data[old_vocab_size:] = (
-                torch.randn((new_vocab_size - old_vocab_size, n_embd)) * std + mean
-            )
-
+    def add_padding_token(self):
+        vocab_size, embed_dim = self.transformer.wte.weight.shape
+        new_wte = nn.Embedding(vocab_size + 1, embed_dim, padding_idx=vocab_size)
+        new_wte.weight.data[:vocab_size] = self.transformer.wte.weight.data
         self.transformer.wte = new_wte
 
-        self.lm_head = nn.Linear(n_embd, new_vocab_size, bias=False)
+        self.lm_head = nn.Linear(embed_dim, vocab_size + 1, bias=False)
         self.lm_head.weight = self.transformer.wte.weight  # re-tie
-
-        self.config.vocab_size = new_vocab_size
-
-        logger.info(f"Extended token embeddings: {old_vocab_size} -> {new_vocab_size}")
-
-    def set_padding_token(self, padding_idx):
-        if self.transformer.wte.padding_idx is not None:
-            raise ValueError(
-                "Padding index configured already for token embeddings "
-                f"(index {self.transformer.wte.padding_idx})"
-            )
-
-        if not padding_idx < self.transformer.wte.weight.shape[0]:
-            raise ValueError(
-                f"{padding_idx=} out of bounds, only "
-                f"{self.transformer.wte.weight.shape[0]} token embeddings"
-            )
-
-        old_wte = self.transformer.wte
-        embed_dim = old_wte.weight.shape[1]
-        vocab_size = old_wte.weight.shape[0]
-
-        # need to init a new nn.Embedding layer with padding_idx set so that gradients
-        # are not computed for the padding token
-        new_wte = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
-
-        with torch.no_grad():
-            new_wte.weight.data.copy_(old_wte.weight.data)
-            new_wte.weight.data[padding_idx].fill_(0.0)
-
-        self.transformer.wte = new_wte
-        self.lm_head.weight = self.transformer.wte.weight  # re-tie
-
-        # also modify original config since it's used in forward in CE loss
-        self.config.padding_idx = padding_idx
-
-        logger.info(f"Set padding embedding at index {padding_idx} to zero")
+        
+        self.config.vocab_size += 1
+        self.config.padding_idx = vocab_size
 
     def apply_lora(self, lora_config):
         self.lora_config = lora_config
@@ -526,56 +466,11 @@ class FineTuneableGPT2(GPT2):
         )
 
     def _freeze_parameters(self):
-        """
-        Freeze parameters according to LoRA + selective embedding strategy:
-        - Keep LoRA A and B matrices trainable
-        - Keep new token embeddings trainable (but not padding token)
-        - Freeze everything else
-        """
-        make_emb_grad_mask = False
         for name, param in self.named_parameters():
             if "lora_" in name:
                 param.requires_grad = True
-                continue
-            
-            if "transformer.wte.weight" in name:
-                # if new tokens, allow grads by default
-                trainable_new_tokens = [
-                    idx for idx in self.new_token_indices 
-                    if self.config.padding_idx is None or idx != self.config.padding_idx
-                ]
-                if trainable_new_tokens:
-                    param.requires_grad = True
-                    make_emb_grad_mask = True
-                else:
-                    logger.info("No new trainable tokens, freezing all embeddings")
-                    param.requires_grad = False
-                continue
-
-            if "lm_head.weight" in name:
-                # lm_head is tied to wte, so we don't need to handle it separately
-                continue
-
-            param.requires_grad = False
-
-        if make_emb_grad_mask:
-           self._make_wte_grad_mask()
-
-        logger.info(
-            "Applied selective parameter freezing for LoRA and new token embeddings"
-        )
-
-    def _make_wte_grad_mask(self):
-        """
-        Build mask that can be applied to selectively zero out embedding gradients for
-        all old tokens. This avoids having to register hooks to embedding tensors, which
-        can be unstable.
-        """
-        mask = torch.zeros_like(self.transformer.wte.weight)
-        for idx in self.new_token_indices:
-            if idx != self.config.padding_idx:
-                mask[idx] = 1.0
-        self.register_buffer("wte_grad_mask", mask)
+            else:
+                param.requires_grad = False
 
     def get_optimizer_parameters(self):
         """
