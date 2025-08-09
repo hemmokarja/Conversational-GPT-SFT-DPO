@@ -37,8 +37,8 @@ class ConversationPreprocessor:
         
         The conversations are then converted to chat format
 
-            user: <content><|endoftext|>
-            assistant: <content><|endoftext|>
+            user: <content><endtoken>
+            assistant: <content><endtoken>
 
         And the text is then tokenized.
 
