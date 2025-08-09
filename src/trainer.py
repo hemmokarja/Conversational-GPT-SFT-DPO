@@ -193,7 +193,6 @@ class Trainer:
             shuffle=False
         )
         self.train_iterator = iter(self.train_loader)
-        self.validation_iterator = iter(self.validation_loader)
 
         if config.compile:
             self.model = torch.compile(self.model)
@@ -334,6 +333,7 @@ class Trainer:
 
     def validate(self):
         self.model.eval()
+        self.validation_iterator = iter(self.validation_loader)
         all_batch_metrics = []
         n_iter = self.config.validation_samples // self.micro_batch_size
         for _ in range(n_iter):
