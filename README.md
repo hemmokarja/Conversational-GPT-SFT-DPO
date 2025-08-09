@@ -11,7 +11,8 @@ A from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI
 - **GPT2 Architecture**: Complete PyTorch implementation of the GPT2 transformer architecture from scratch
 - **Weight Loading**: Integration with Hugging Face pre-trained GPT2 weights
 - **Training Pipeline**: Comprehensive custom training and evaluation suite
-- **Supervised Fine-Tuning**: SFT implementation using OASST1 dataset to teach reciprocal conversation patterns
+- **Supervised Fine-Tuning (SFT)**: SFT implementation using OASST1 dataset to teach reciprocal conversation patterns
+- **LoRA (Low-Rank Adaptation)**: From-scratch PyTorch implementation for parameter-efficient fine-tuning, reducing memory usage and training time
 
 ### 🚧 In Development
 
