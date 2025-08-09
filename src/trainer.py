@@ -1,8 +1,10 @@
 import contextlib
 import collections
+import datetime
 import logging
+import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Tuple, Optional, List
 
 import numpy as np
@@ -36,6 +38,7 @@ class TrainerConfig:
     generate_max_tokens: int = 100
     generate_temperature: float = 1.0
     generate_top_k: int = 50
+    checkpoint_filepath: Optional[str] = None  # don't save if None
 
     def __post_init__(self):
         if self.batch_size % self.gradient_acc_steps != 0:
@@ -127,22 +130,35 @@ def _make_loader(
     )
 
 
-def _print_train_results(iter_, samples_seen, avg_loss, lr, samples_per_sec):
+def _to_hms(took):
+    took = int(took)
+    hours = took // 3600
+    minutes = (took % 3600) // 60
+    seconds = took % 60
+    return hours, minutes, seconds
+
+
+def _print_train_results(
+    iter_, samples_seen, avg_loss, lr, took_hms, samples_per_sec
+):
+    h, m, s = took_hms
     print(
         f"🔄 iter: {iter_:>6,} │ "
         f"📊 samples: {samples_seen:>8,} │ "
         f"📉 loss: {avg_loss:>7.4f} │ "
         f"📈 lr: {lr:>9.2e} │ "
+        f"⏳ time: {h:02}:{m:02}:{s:02} | "
         f"⚡ {int(samples_per_sec):>4,} samples/s"
     )
 
 
-def _print_validation_results(metrics, samples, samples_seen):
+def _print_validation_results(metrics, samples, samples_seen, took_hms):
+    h, m, s = took_hms
     print("\n" + "="*80)
     print("VALIDATION RESULTS")
     print("="*80)
 
-    print(f"📊 METRICS (samples seen: {samples_seen:,})")
+    print(f"📊 METRICS (samples seen: {samples_seen:,}, {h:02}:{m:02}:{s:02})")
     print("-" * 40)
     print(f"  Loss:       {metrics['loss']:.4f}")
     print(f"  Accuracy:   {metrics['accuracy']:.1%}")
@@ -283,15 +299,35 @@ class Trainer:
         prev_iter = max(prev_iter, 0)
         return this_iter > prev_iter
 
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
+
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
 
         self.model.train()
 
-        recent_losses = collections.deque(maxlen=self.config.log_interval)
         n_iter = n_samples // self.config.batch_size
+
+        recent_losses = collections.deque(maxlen=self.config.log_interval)
         samples_seen_prev = 0
+        best_loss = float("inf")
         t0 = time.time()
+        t_start = t0
 
         for i in range(n_iter):
             loss = self._take_optimisation_step()
@@ -305,19 +341,30 @@ class Trainer:
                 samples_per_sec = (self.samples_seen - samples_seen_prev) / took
                 samples_seen_prev = self.samples_seen
 
+                took_total = t1 - t_start
+                took_hms = _to_hms(took_total)
+
                 _print_train_results(
                     i,
                     self.samples_seen,
                     np.mean(recent_losses),
                     self.get_current_lr(),
+                    took_hms,
                     samples_per_sec
                 )
 
             if self._crossed_interval(self.config.validation_interval):
                 metrics, samples = self.validate()
-                _print_validation_results(metrics, samples, self.samples_seen)
+                took_total = time.time() - t_start
+                took_hms = _to_hms(took_total)
+                _print_validation_results(
+                    metrics, samples, self.samples_seen, took_hms
+                )
+                if self.config.checkpoint_filepath and metrics["loss"] < best_loss:
+                    best_loss = metrics["loss"]
+                    self._save_checkpoint(metrics)
                 t0 = time.time()
-        
+
         logger.info("Finished model training.")
 
     def validate(self):
