@@ -2,7 +2,7 @@
 
 **⚠️ Work in Progress**
 
-A from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI, featuring custom pipelines for Supervised Fine-Tuning (SFT) and planned Direct Preference Optimization (DPO). SFT is used for multi-turn dialogue alignment, teaching context awareness and turn-taking, while DPO enables reward-free preference optimization for higher-quality responses. Built without high-level frameworks like Hugging Face Transformers to maximize low-level control and hands-on understanding of modern fine-tuning techniques.
+A from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI, featuring custom pipelines for Supervised Fine-Tuning (SFT) and planned Direct Preference Optimization (DPO). SFT is used for multi-turn dialogue alignment, teaching context awareness and turn-taking, while DPO enables reward-free preference optimization for higher-quality responses. Built without relying on high-level training APIs from frameworks like Hugging Face Transformers to maximize low-level control and hands-on understanding of modern fine-tuning techniques.
 
 ## 🚀 Key Features
 
