@@ -2,31 +2,49 @@ import re
 
 import torch
 
-from src import text_util
+
+_TURN_SEPARATOR = "!END"
 
 
-class ChatMLPreprocessor:
-    def __init__(self, tokenizer, ignored_idx=-100, max_length=None):
+class ConversationPreprocessor:
+    def __init__(
+        self,
+        tokenizer,
+        ignored_idx=-100,
+        max_length=None,
+        turn_separator=_TURN_SEPARATOR,
+    ):
         self.tokenizer = tokenizer
         self.ignored_idx = ignored_idx
         self.max_length = (
             tokenizer.model_max_length if max_length is None else max_length
         )
+        self.turn_separator = turn_separator
+        self.end_tokens = self.tokenizer.encode(turn_separator)
 
     def __call__(self, conversation, for_generation=False):
         if for_generation:
             return self.encode_conversation_for_generation_to_tokens(conversation)
         return self.encode_conversation_to_tokens(conversation)
-        
 
     def encode_conversation_to_tokens(self, conversation):
         """
-        Convert conversation to tokenized ChatML format for training.
+        Convert conversation to tokenized User/Assistant chat format for training.
+
+        Inputs are assumed to conform to format
+
+            {"messages": [{"role": "user|assistant", "content": "..."}]}
+        
+        The conversations are then converted to chat format
+
+            user: <content><|endoftext|>
+            assistant: <content><|endoftext|>
+
+        And the text is then tokenized.
 
         Args:
             conversation: {"messages": [{"role": "user|assistant", "content": "..."}]}
-            return_labels: Whether to return labels for loss computation
-            
+
         Returns:
             {"input_ids": [...], "labels": [...]}
         """
@@ -34,11 +52,10 @@ class ChatMLPreprocessor:
 
         input_ids = []
         labels = []
-        
+
         for msg in conversation["messages"]:
             role, content = msg["role"], msg["content"]
 
-            # <|im_start|>role\ncontent<|im_end|>\n
             msg_ids, msg_labels = self._encode_message(role, content)
             input_ids.extend(msg_ids)
             labels.extend(msg_labels)
@@ -53,11 +70,11 @@ class ChatMLPreprocessor:
 
     def encode_conversation_for_generation_to_tokens(self, conversation):
         """
-        Convert conversation to tokenized ChatML format for generation.
+        Convert conversation to tokenized chat format for generation.
 
         The conversation must end with an assistant message, which can have empty
         content ("", None).
-        The final assistant message will be left incomplete (no <|im_end|> token) 
+        The final assistant message will be left incomplete (no eos_token) 
         to prompt the model to continue generation.
 
         Args:
@@ -105,10 +122,8 @@ class ChatMLPreprocessor:
                 token_ids = token_ids[0]
             token_ids = token_ids.tolist()
 
-        chatml_text = text_util.decode_by_token(
-            self.tokenizer, token_ids, skip_special_tokens=False
-        )
-        conversation = self._parse_chatml_text(chatml_text)
+        chat_text = self.tokenizer.decode(token_ids, skip_special_tokens=False)
+        conversation = self._parse_chat_text(chat_text)
         self._validate_conversation(conversation)
         return conversation
 
@@ -117,22 +132,18 @@ class ChatMLPreprocessor:
         ids = []
         labels = []
 
-        # <|im_start|>
-        ids.append(self.tokenizer.im_start_token_id)
-        labels.append(self.ignored_idx)
-
-        # role
-        role_tokens = self.tokenizer.encode(role, add_special_tokens=False)
+        # role + space
+        role_ = role + ": "
+        role_tokens = self.tokenizer.encode(role_, add_special_tokens=False)
         ids.extend(role_tokens)
         labels.extend([self.ignored_idx] * len(role_tokens))
 
-        # \n
-        ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
-        labels.append(self.ignored_idx)
-
         # content
         content_tokens = self.tokenizer.encode(
-            content, add_special_tokens=False, truncation=True, max_length=self.max_length
+            content,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=self.max_length
         )
         ids.extend(content_tokens)
 
@@ -141,12 +152,13 @@ class ChatMLPreprocessor:
         else:
             labels.extend([self.ignored_idx] * len(content_tokens))
 
-        # <|im_end|>
-        ids.append(self.tokenizer.im_end_token_id)
+        # end
+        end_tokens = self.tokenizer.encode(self.turn_separator, add_special_tokens=False)
+        ids.extend(end_tokens)
         if role == "assistant":
-            labels.append(self.tokenizer.im_end_token_id)
+            labels.extend(end_tokens)
         else:
-            labels.append(self.ignored_idx)
+            labels.extend([self.ignored_idx] * len(end_tokens))
 
         # \n
         ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
@@ -156,7 +168,7 @@ class ChatMLPreprocessor:
 
     def _encode_message_for_generation(self, role, content):
         """
-        Encode a message for generation: No <|im_end|> token or trailing newline.
+        Encode a message for generation.
 
         This method is specifically for the final assistant message in generation,
         leaving it incomplete so the model continues from there.
@@ -166,41 +178,38 @@ class ChatMLPreprocessor:
 
         ids = []
 
-        # <|im_start|>
-        ids.append(self.tokenizer.im_start_token_id)
-
-        # role
-        role_tokens = self.tokenizer.encode(role, add_special_tokens=False)
+        # role + space
+        role_ = role + ": "
+        role_tokens = self.tokenizer.encode(role_, add_special_tokens=False)
         ids.extend(role_tokens)
-
-        # \n
-        ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
 
         # content (if any)
         if content:
             content_tokens = self.tokenizer.encode(
-                content, add_special_tokens=False, truncation=True, max_length=self.max_length
+                content,
+                add_special_tokens=False,
+                truncation=True,
+                max_length=self.max_length
             )
             ids.extend(content_tokens)
 
         return ids
 
-    def _parse_chatml_text(self, chatml_text):
+    def _parse_chat_text(self, chat_text):
         """
-        Parse ChatML formatted text back into conversation format.
-
-        Uses regex to robustly extract role and content from each message block.
+        Parse User/Assistant formatted text back into conversation format.
+        Uses regex to extract role and content from each message block.
         """
+        esc_end = re.escape(self.turn_separator)
 
-        esc_start = re.escape(self.tokenizer.im_start_token)
-        esc_end = re.escape(self.tokenizer.im_end_token)
-
-        pattern = rf"{esc_start}\s*(\w+)\n(.*?){esc_end}"
-        matches = re.findall(pattern, chatml_text, flags=re.DOTALL)
+        # pattern to match "role: content!END"
+        pattern = rf"(user|assistant):\s*(.*?){esc_end}"
+        matches = re.findall(pattern, chat_text, flags=re.DOTALL)
 
         messages = []
         for role, content in matches:
-            messages.append({"role": role, "content": content.strip()})
+            normalized_role = role.lower()
+            messages.append({"role": normalized_role, "content": content.strip()})
 
         return {"messages": messages}
     

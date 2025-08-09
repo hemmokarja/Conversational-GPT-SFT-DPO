@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 class TrainerConfig:
     batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
-    validation_samples: int = 1000
-    validation_interval: int = 1000
-    sample_prompts: List[str] = field(default_factory=list)
     log_interval: int = 100
     compile: bool = True
     base_learning_rate: float = 3e-4
@@ -33,6 +30,12 @@ class TrainerConfig:
     num_workers: Optional[int] = 0
     prefetch_factor: int = None
     pin_memory: bool = False
+    validation_samples: int = 1000
+    validation_interval: int = 1000
+    generate_sample_prompts: List[str] = field(default_factory=list)
+    generate_max_tokens: int = 100
+    generate_temperature: float = 1.0
+    generate_top_k: int = 50
 
     def __post_init__(self):
         if self.batch_size % self.gradient_acc_steps != 0:
@@ -163,7 +166,7 @@ class Trainer:
         self, config, model, tokenizer, train_dataset, validation_dataset, device
     ):
         self.config = config
-        self.model = model
+        self.model = model.to(device)
         self.tokenizer = tokenizer
         self.device = device
 
@@ -203,18 +206,13 @@ class Trainer:
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
 
-        prevent_token_ids = [
-            tokenizer.im_start_token_id,
-            tokenizer.pad_token_id
-        ]
         self.validator = SFTValidator(
             self.model,
             self.tokenizer, 
             self.config,
             self.ctx,
             device,
-            prevent_tokens=prevent_token_ids,
-            stop_token=tokenizer.im_end_token_id,
+            prevent_tokens=[tokenizer.pad_token_id],
         )
 
     def _get_next_batch(self, mode="train"):
@@ -271,12 +269,6 @@ class Trainer:
                 loss.backward()
                 total_loss += loss.item()
 
-        # for LoRA
-        if hasattr(self.model, "wte_grad_mask"):
-            wte_grad = self.model.transformer.wte.weight.grad
-            if wte_grad is not None:
-                wte_grad.mul_(self.model.wte_grad_mask)
-
         if self.config.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.trainable_params, self.config.grad_clip)
 
@@ -293,9 +285,6 @@ class Trainer:
 
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
-
-        metrics, samples = self.validate()
-        _print_validation_results(metrics, samples, self.samples_seen)        
 
         self.model.train()
 
@@ -341,7 +330,7 @@ class Trainer:
             batch = self._prepare_batch(batch)
             batch_metrics = self.validator.compute_batch_metrics(batch)
             all_batch_metrics.append(batch_metrics)
-        
+
         metrics = self.validator.aggregate_metrics(all_batch_metrics)
         samples = self.validator.generate_samples()
         self.model.train()

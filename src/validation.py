@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from src import text_util
-from src.chatml import ChatMLPreprocessor
+from src.preprocess import ConversationPreprocessor
 
 
 def _make_conversation_for_sample_generation(user_prompt):
@@ -22,7 +22,6 @@ class BaseValidator(ABC):
         ctx,
         device,
         prevent_tokens=None,
-        stop_token=None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -30,9 +29,10 @@ class BaseValidator(ABC):
         self.ctx = ctx
         self.device = device
         self.prevent_tokens = prevent_tokens
-        self.stop_token = stop_token
 
-        self.preprocessor = ChatMLPreprocessor(tokenizer, model.config.ignored_idx)
+        self.preprocessor = ConversationPreprocessor(
+            tokenizer, model.config.ignored_idx
+        )
 
     @abstractmethod
     def compute_batch_metrics(self, batch):
@@ -55,18 +55,9 @@ class BaseValidator(ABC):
 
 class SFTValidator(BaseValidator):
     def __init__(
-        self,
-        model,
-        tokenizer,
-        trainer_config,
-        ctx,
-        device,
-        prevent_tokens=None,
-        stop_token=None,
+        self, model, tokenizer, trainer_config, ctx, device, prevent_tokens=None
     ):
-        super().__init__(
-            model, tokenizer, trainer_config, ctx, device, prevent_tokens, stop_token
-        )
+        super().__init__(model, tokenizer, trainer_config, ctx, device, prevent_tokens)
 
     def compute_batch_metrics(self, batch):
         with self.ctx, torch.no_grad():
@@ -90,7 +81,7 @@ class SFTValidator(BaseValidator):
     def generate_samples(self):
         samples = []
 
-        for prompt in self.trainer_config.sample_prompts:
+        for prompt in self.trainer_config.generate_sample_prompts:
 
             conversation = _make_conversation_for_sample_generation(prompt)
             processed = self.preprocessor(conversation, for_generation=True)
@@ -99,10 +90,10 @@ class SFTValidator(BaseValidator):
             with self.ctx, torch.no_grad():
                 generated = self.model.generate(
                     x,
-                    max_tokens=100,  # TODO config
-                    temperature=1.0,  # TODO config
-                    top_k=50,  # TODO config
-                    stop_token=self.stop_token,
+                    max_tokens=self.trainer_config.generate_max_tokens,
+                    temperature=self.trainer_config.generate_temperature,
+                    top_k=self.trainer_config.generate_top_k,
+                    end_tokens=self.preprocessor.end_tokens,
                     prevent_tokens=self.prevent_tokens,
                 )
 

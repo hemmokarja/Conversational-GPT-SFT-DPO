@@ -3,7 +3,7 @@ from collections import defaultdict
 import datasets
 from datasets import Dataset
 
-from src.chatml import ChatMLPreprocessor
+from src.preprocess import ConversationPreprocessor
 
 
 def _parse_valid_conversations_from_tree(
@@ -119,7 +119,7 @@ def load_oasst_dataset(name, tokenizer, ignored_idx=-100, num_proc=4):
     for split in ["train", "validation"]:
         conversations = _parse_conversations(full_dataset[split])
         dataset = Dataset.from_list(conversations)
-        preprocessor = ChatMLPreprocessor(tokenizer, ignored_idx)
+        preprocessor = ConversationPreprocessor(tokenizer, ignored_idx)
         datasets.logging.disable_progress_bar()
         preprocessed_dataset = dataset.map(preprocessor, num_proc=num_proc)
         datasets_.append(preprocessed_dataset)
