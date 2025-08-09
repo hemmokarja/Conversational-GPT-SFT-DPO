@@ -49,7 +49,7 @@ DPO is a relatively new method, replacing the more traditional, albeit more unst
 
 ## 📊 Sample Outputs
 
-The following examples demonstrate the impact of Supervised Fine-Tuning on model responses using the smallest GPT-2 model (124M parameters) and only ~1 hour of training on a MacBook Pro (CPU). While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment.
+The following examples demonstrate the impact of Supervised Fine-Tuning on model responses using the smallest GPT-2 model (124M parameters) and only ~1 hour of training on a MacBook Pro (CPU). While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
 
 ### "What are the best attractions in Rome, Italy?"
 
