@@ -20,7 +20,7 @@ class ConversationPreprocessor:
             tokenizer.model_max_length if max_length is None else max_length
         )
         self.turn_separator = turn_separator
-        self.stop_tokens = self.tokenizer.encode(turn_separator)
+        self.end_tokens = self.tokenizer.encode(turn_separator)
 
     def __call__(self, conversation, for_generation=False):
         if for_generation:
@@ -153,7 +153,7 @@ class ConversationPreprocessor:
             labels.extend([self.ignored_idx] * len(content_tokens))
 
         # end
-        end_tokens = self.tokenizer.encode("!END", add_special_tokens=False)
+        end_tokens = self.tokenizer.encode(self.turn_separator, add_special_tokens=False)
         ids.extend(end_tokens)
         if role == "assistant":
             labels.extend(end_tokens)
@@ -200,18 +200,17 @@ class ConversationPreprocessor:
         Parse User/Assistant formatted text back into conversation format.
         Uses regex to extract role and content from each message block.
         """
+        esc_end = re.escape(self.turn_separator)
 
-        esc_end = re.escape("!END")
-
-        # Pattern to match "role: content!END" blocks
+        # pattern to match "role: content!END"
         pattern = rf"(user|assistant):\s*(.*?){esc_end}"
         matches = re.findall(pattern, chat_text, flags=re.DOTALL)
-        
+
         messages = []
         for role, content in matches:
             normalized_role = role.lower()
             messages.append({"role": normalized_role, "content": content.strip()})
-        
+
         return {"messages": messages}
     
     def _validate_conversation(self, conversation):

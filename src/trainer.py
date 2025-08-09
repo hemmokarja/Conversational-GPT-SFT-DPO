@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 class TrainerConfig:
     batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
-    validation_samples: int = 1000
-    validation_interval: int = 1000
-    sample_prompts: List[str] = field(default_factory=list)
     log_interval: int = 100
     compile: bool = True
     base_learning_rate: float = 3e-4
@@ -33,6 +30,12 @@ class TrainerConfig:
     num_workers: Optional[int] = 0
     prefetch_factor: int = None
     pin_memory: bool = False
+    validation_samples: int = 1000
+    validation_interval: int = 1000
+    generate_sample_prompts: List[str] = field(default_factory=list)
+    generate_max_tokens: int = 100
+    generate_temperature: float = 1.0
+    generate_top_k: int = 50
 
     def __post_init__(self):
         if self.batch_size % self.gradient_acc_steps != 0:
@@ -283,9 +286,6 @@ class Trainer:
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
 
-        metrics, samples = self.validate()
-        _print_validation_results(metrics, samples, self.samples_seen)        
-
         self.model.train()
 
         recent_losses = collections.deque(maxlen=self.config.log_interval)
@@ -330,7 +330,7 @@ class Trainer:
             batch = self._prepare_batch(batch)
             batch_metrics = self.validator.compute_batch_metrics(batch)
             all_batch_metrics.append(batch_metrics)
-        
+
         metrics = self.validator.aggregate_metrics(all_batch_metrics)
         samples = self.validator.generate_samples()
         self.model.train()

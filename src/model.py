@@ -218,9 +218,9 @@ class GPT2(nn.Module):
         return logits, loss
 
     @staticmethod
-    def _should_stop(x, stop_tokens):
-        n = len(stop_tokens)
-        return x.view(-1)[-n:].cpu().tolist() == stop_tokens
+    def _should_stop(x, end_tokens):
+        n = len(end_tokens)
+        return x.view(-1)[-n:].cpu().tolist() == end_tokens
 
     @torch.no_grad()
     def generate(
@@ -229,7 +229,7 @@ class GPT2(nn.Module):
         max_tokens,
         temperature=1.0,
         top_k=None,
-        stop_tokens=None,  # list of token ids
+        end_tokens=None,
         prevent_tokens=None,
     ):
         if x.dim() != 2:
@@ -251,7 +251,7 @@ class GPT2(nn.Module):
             x_next = torch.multinomial(probs, num_samples=1)  # [B, 1]
             x = torch.cat((x, x_next), dim=1)  # [B, S + 1]
 
-            if stop_tokens is not None and self._should_stop(x, stop_tokens):
+            if end_tokens is not None and self._should_stop(x, end_tokens):
                 break
 
         return x

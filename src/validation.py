@@ -81,7 +81,7 @@ class SFTValidator(BaseValidator):
     def generate_samples(self):
         samples = []
 
-        for prompt in self.trainer_config.sample_prompts:
+        for prompt in self.trainer_config.generate_sample_prompts:
 
             conversation = _make_conversation_for_sample_generation(prompt)
             processed = self.preprocessor(conversation, for_generation=True)
@@ -90,10 +90,10 @@ class SFTValidator(BaseValidator):
             with self.ctx, torch.no_grad():
                 generated = self.model.generate(
                     x,
-                    max_tokens=100,  # TODO config
-                    temperature=1.0,  # TODO config
-                    top_k=50,  # TODO config
-                    stop_tokens=self.preprocessor.stop_tokens,
+                    max_tokens=self.trainer_config.generate_max_tokens,
+                    temperature=self.trainer_config.generate_temperature,
+                    top_k=self.trainer_config.generate_top_k,
+                    end_tokens=self.preprocessor.end_tokens,
                     prevent_tokens=self.prevent_tokens,
                 )
 
