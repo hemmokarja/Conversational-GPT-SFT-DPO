@@ -3,13 +3,24 @@ import re
 import torch
 
 
+_TURN_SEPARATOR = "!END"
+
+
 class ConversationPreprocessor:
-    def __init__(self, tokenizer, ignored_idx=-100, max_length=None):
+    def __init__(
+        self,
+        tokenizer,
+        ignored_idx=-100,
+        max_length=None,
+        turn_separator=_TURN_SEPARATOR,
+    ):
         self.tokenizer = tokenizer
         self.ignored_idx = ignored_idx
         self.max_length = (
             tokenizer.model_max_length if max_length is None else max_length
         )
+        self.turn_separator = turn_separator
+        self.stop_tokens = self.tokenizer.encode(turn_separator)
 
     def __call__(self, conversation, for_generation=False):
         if for_generation:

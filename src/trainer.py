@@ -210,7 +210,6 @@ class Trainer:
             self.ctx,
             device,
             prevent_tokens=[tokenizer.pad_token_id],
-            stop_tokens=tokenizer.encode("!END"),
         )
 
     def _get_next_batch(self, mode="train"):

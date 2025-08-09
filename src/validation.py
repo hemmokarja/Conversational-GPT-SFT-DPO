@@ -22,7 +22,6 @@ class BaseValidator(ABC):
         ctx,
         device,
         prevent_tokens=None,
-        stop_tokens=None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -30,7 +29,6 @@ class BaseValidator(ABC):
         self.ctx = ctx
         self.device = device
         self.prevent_tokens = prevent_tokens
-        self.stop_tokens = stop_tokens
 
         self.preprocessor = ConversationPreprocessor(
             tokenizer, model.config.ignored_idx
@@ -57,18 +55,9 @@ class BaseValidator(ABC):
 
 class SFTValidator(BaseValidator):
     def __init__(
-        self,
-        model,
-        tokenizer,
-        trainer_config,
-        ctx,
-        device,
-        prevent_tokens=None,
-        stop_tokens=None,
+        self, model, tokenizer, trainer_config, ctx, device, prevent_tokens=None
     ):
-        super().__init__(
-            model, tokenizer, trainer_config, ctx, device, prevent_tokens, stop_tokens
-        )
+        super().__init__(model, tokenizer, trainer_config, ctx, device, prevent_tokens)
 
     def compute_batch_metrics(self, batch):
         with self.ctx, torch.no_grad():
@@ -104,7 +93,7 @@ class SFTValidator(BaseValidator):
                     max_tokens=100,  # TODO config
                     temperature=1.0,  # TODO config
                     top_k=50,  # TODO config
-                    stop_tokens=self.stop_tokens,
+                    stop_tokens=self.preprocessor.stop_tokens,
                     prevent_tokens=self.prevent_tokens,
                 )
 
