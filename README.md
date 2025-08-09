@@ -2,7 +2,7 @@
 
 **⚠️ Work in Progress**
 
-A hands-on implementation of modern fine-tuning techniques for GPT2, focusing on conversational AI capabilities. This project implements a complete fine-tuning pipeline for GPT2, transforming a pre-trained document completion model into a conversational AI assistant. The main goal is to gain practical experience with modern fine-tuning methodologies. Therefore, the project deliberately avoids high-level frameworks like Hugging Face Transformers.
+A from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI, featuring custom pipelines for Supervised Fine-Tuning (SFT) and planned Direct Preference Optimization (DPO). SFT is used for multi-turn dialogue alignment, teaching context awareness and turn-taking, while DPO enables reward-free preference optimization for higher-quality responses. Built without high-level frameworks like Hugging Face Transformers to maximize low-level control and hands-on understanding of modern fine-tuning techniques.
 
 ## 🚀 Key Features
 
