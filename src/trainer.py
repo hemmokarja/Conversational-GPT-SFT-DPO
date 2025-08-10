@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from src.model import FineTuneableGPT2, GPTConfig
 from src.validation import SFTValidator
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ class Trainer:
 
         self.micro_batch_size = config.batch_size // config.gradient_acc_steps
         self.samples_seen = 0
+        self.best_loss = float("inf")
 
         optimizer, trainable_params = _configure_optimizer(
             model, config.weight_decay, config.base_learning_rate, config.betas
@@ -305,7 +307,7 @@ class Trainer:
             os.makedirs(cp_dir, exist_ok=True)
 
         checkpoint = {
-            "datetime": datetime.datetime.now().isoformat(),
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "trainer_config": asdict(self.config),
@@ -321,11 +323,10 @@ class Trainer:
 
         self.model.train()
 
-        n_iter = n_samples // self.config.batch_size
+        n_iter = n_samples // self.config.batch_size + 1
 
         recent_losses = collections.deque(maxlen=self.config.log_interval)
         samples_seen_prev = 0
-        best_loss = float("inf")
         t0 = time.time()
         t_start = t0
 
@@ -360,8 +361,8 @@ class Trainer:
                 _print_validation_results(
                     metrics, samples, self.samples_seen, took_hms
                 )
-                if self.config.checkpoint_filepath and metrics["loss"] < best_loss:
-                    best_loss = metrics["loss"]
+                if self.config.checkpoint_filepath and metrics["loss"] < self.best_loss:
+                    self.best_loss = metrics["loss"]
                     self._save_checkpoint(metrics)
                 t0 = time.time()
 
@@ -382,3 +383,30 @@ class Trainer:
         samples = self.validator.generate_samples()
         self.model.train()
         return metrics, samples
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint_path,
+        tokenizer,
+        train_dataset,
+        validation_dataset,
+        device,
+        model_cls=FineTuneableGPT2,
+    ):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        logger.info(f"Loaded checkpoint saved on '{checkpoint['datetime']}'")
+        
+        model_config = GPTConfig(**checkpoint["model_config"])
+        model = model_cls(model_config)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        
+        trainer_config = TrainerConfig(**checkpoint["trainer_config"])
+        trainer = cls(
+            trainer_config, model, tokenizer, train_dataset, validation_dataset, device
+        )
+        trainer.samples_seen = checkpoint["samples_seen"]
+        if checkpoint["validation_metrics"] is not None:
+            trainer.best_loss = checkpoint["validation_metrics"]["loss"]
+
+        return trainer
