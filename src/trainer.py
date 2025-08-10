@@ -314,6 +314,7 @@ class Trainer:
             "model_config": asdict(self.model.config),
             "samples_seen": self.samples_seen,
             "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
         }
         torch.save(checkpoint, self.config.checkpoint_filepath)
         logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
@@ -387,23 +388,27 @@ class Trainer:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path,
-        tokenizer,
+        checkpoint,
         train_dataset,
         validation_dataset,
         device,
         model_cls=FineTuneableGPT2,
     ):
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        logger.info(f"Loaded checkpoint saved on '{checkpoint['datetime']}'")
-        
+        logger.info(
+            f"Initializing Trainer from checkpoint saved on '{checkpoint['datetime']}'"
+        )
         model_config = GPTConfig(**checkpoint["model_config"])
         model = model_cls(model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
-        
+
         trainer_config = TrainerConfig(**checkpoint["trainer_config"])
         trainer = cls(
-            trainer_config, model, tokenizer, train_dataset, validation_dataset, device
+            trainer_config,
+            model,
+            checkpoint["tokenizer"],
+            train_dataset,
+            validation_dataset,
+            device,
         )
         trainer.samples_seen = checkpoint["samples_seen"]
         if checkpoint["validation_metrics"] is not None:
