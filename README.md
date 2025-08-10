@@ -49,7 +49,7 @@ DPO is a relatively new method, replacing the more traditional, albeit more unst
 
 ## 📊 Sample Outputs
 
-The following examples demonstrate the impact of Supervised Fine-Tuning on model responses using the smallest GPT-2 model (124M parameters) and only ~1 hour of training on a MacBook Pro (CPU). While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
+The following examples demonstrate the impact of Supervised Fine-Tuning on model responses using the smallest GPT-2 model (124M parameters) and only ~1.5 hours of training on a MacBook Pro (CPU). While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
 
 ### "What are the best attractions in Rome, Italy?"
 
@@ -94,14 +94,20 @@ To achieve these end results, increase the sample size.
 
 After:
 ```
-Architects are engineers and experts who provide solutions to building systems, and
-they often have particular knowledge of architecture or engineering techniques.
-This can have a huge impact on how you do a project, such as when you're designing new
-buildings or installing them in a new neighborhood.
+An architect's job is to design, build, and maintain public spaces. An architect's job
+can be very challenging, requiring a combination of high-precision and advanced skills,
+and a strong understanding of the environment.
 
-In addition to doing your design, architects may also assist you with building
-management and planning, as well as provide knowledge about product development, design
-concepts, design patterns, and design strategies.
+An architect's approach to public spaces is limited due to the limited resources of the
+city; however, it can provide important input in designing, building, and maintaining
+the public spaces. An architect focuses on building sustainable buildings using design
+and construction materials, with a focus on materials that are both accessible and
+affordable for both public and private operators.
+
+An architect is also committed to ensuring that spaces are open to all levels of patrons
+and are not subject to construction constraints. An architect's goal in life is to
+create vibrant and sustainable public spaces, and for those with disabilitie, the
+project provides a unique opportunity for them to participate in a creative community.
 ```
 
 ----
