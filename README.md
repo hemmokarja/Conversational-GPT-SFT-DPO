@@ -2,7 +2,7 @@
 
 **⚠️ Work in Progress**
 
-A **from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI**, featuring **custom pipelines for Supervised Fine-Tuning (SFT) and [planned] Direct Preference Optimization (DPO) with LoRA (Low-Rank Adaptation).** SFT is used for multi-turn dialogue alignment, teaching context awareness and turn-taking, while DPO enables reward-free preference optimization for higher-quality responses. Built without relying on high-level training APIs from frameworks like Hugging Face Transformers to maximize low-level control and hands-on understanding of modern fine-tuning techniques. This project is a personal deep dive to really get under the hood of how these fine-tuning methods work in practice.
+A **from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational AI**, featuring **custom pipelines for Supervised Fine-Tuning (SFT) and [planned] Direct Preference Optimization (DPO) with LoRA (Low-Rank Adaptation).** SFT is used for multi-turn dialogue alignment, teaching context awareness and turn-taking, while DPO enables reward-free preference optimization for higher-quality responses. Built without relying on high-level training APIs from frameworks like Hugging Face Transformers to maximize low-level control and hands-on understanding of modern fine-tuning techniques. Includes a lightweight CLI chat interface for interacting with fine-tuned models via terminal. This project is a personal deep dive to really get under the hood of how these fine-tuning methods work in practice.
 
 ## 🚀 Key Features
 
@@ -13,6 +13,7 @@ A **from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational 
 - **Training Pipeline**: Custom training and evaluation suite for low-level control
 - **Supervised Fine-Tuning (SFT)**: SFT implementation supporting OASST1/OASST2 datasets to teach reciprocal conversation patterns
 - **LoRA (Low-Rank Adaptation)**: From-scratch PyTorch implementation for parameter-efficient fine-tuning, reducing memory usage and training time
+- **CLI Chat Interface**: Lightweight terminal-based chat interface for interacting with fine-tuned models
 
 ### 🚧 In Development
 
@@ -26,6 +27,22 @@ This project uses [uv](https://github.com/astral-sh/uv) for dependency managemen
 # Install dependencies
 uv sync
 ```
+
+## 🚀 Quick Start
+
+### Fine-tuning with SFT
+To apply Supervised Fine-Tuning, run:
+```bash
+uv run sft.py
+```
+Remember to adjust configs (in that file) to your liking.
+
+### Chatting with a Fine-tuned Model
+To chat with a fine-tuned model, run:
+```bash
+uv run chat.py
+```
+Remember to configure the correct checkpoint (in that file).
 
 ## 📚 Methodology
 
@@ -49,70 +66,73 @@ DPO is a relatively new method, replacing the more traditional, albeit more unst
 
 ## 📊 Sample Outputs
 
-The following examples demonstrate the impact of Supervised Fine-Tuning on model responses using the smallest GPT-2 model (124M parameters) and only ~1.5 hours of training on a MacBook Pro (CPU). While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
+The following example demonstrates the impact of Supervised Fine-Tuning on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and about one hour of training on a `g5.xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
 
-### "What are the best attractions in Rome, Italy?"
+### Before SFT
 
-Before:
 ```
-If you're asking how places are worth living in Rome, France, Finland and the US, I'm
-still not sure that they really represent you. That probably goes without saying, but
-they're the basic elements in many cities - a rising sea level and frequent exposure to
-an unwanted summer air all add up to having a place worth living in despite not big
-enough real estate.
-```
+========== user ==========
+What does a Data Scientist do?
 
-After:
-```
-As I know Rome, it is not a city and it is not a tourist attraction but it is a city
-with some amazing attractions.  Here are some places to stay in Rome, Italy:
+========== assistant ==========
+How do they actually work? How are they paid? What is a data scientist doing like a foot
+soldier? 9. How do you become a weather editor? (Write a research paper by hand, in a
+journal, or scan the Internet) 10. What women do they want to marry? In 9 of the 10 ways
+we usually use figures, the definition is different (gendered roles, getting older, etc)
+but you're definitely feeling the female trappings too.
 
-Museum is the oldest museum in Rome with its historical attractions and the famous
-Pompeii Square.
+========== user ==========
+What about a Machine Learning Engineer?
 
-Currency market is a thriving market of the Roman gold and Roman numismatics.
-
-Grizzoli and Ruggiano are two of the most famous historical museums in Rome and its
-heritage. They are the largest museums in Rome and can be enjoyed from anywhere.
-
-Pizza is one of Rome's great and most popular cuisine and many are often held by
-tourists as well.
-
-There are many activities you can take advantage of during your stay here with many
-other attractions including sports such as Olympic events, concerts, film shoots,
-theatre productions and more.
+========== assistant ==========
+When founders leave, how often do you see employees who were engineer? You may not get
+any sense of it until previous phase, yet now you've just been told "you're ears will
+too." What if you take to the Internet and try to teach about the joys of machine
+learning.
 ```
 
-### "What does an architect do?"
+As you can see, a pre-trained document-completion GPT model is entirely incapable of reciprocal conversation or answering questions.
 
-Before:
+### After SFT
+
 ```
-Get a library of data. Copy through Schapiroz's channel (thus copying over the
-accumulated data) to show the same bits/Octangles you see in every piece of the diagram.
-To achieve these end results, increase the sample size.
+========== user ==========
+What does a Data Scientist do?
+
+========== assistant ==========
+A Data Scientist is a professional who specializes in managing data in the research
+industry. They handle data using sophisticated tools and techniques to analyze and
+interpret complex data sets, and make decisions about its quality and applicability to
+their customer's needs. While a Data Scientist is a critical part of your organization's
+data science efforts and might provide significant benefits, it's likely the most
+challenging role in the industry, since they often work alone or within a team, and
+must master technical skills designed for software programmers.
+
+Learning from seasoned data scientists may help you stay ahead of the curve, and develop
+your skills on the cutting edge of computing, analytics, and machine learning, as well
+as on innovative new technologies in business.
+
+========== user ==========
+What about a Machine Learning Engineer?
+
+========== assistant ==========
+A Machine Learning Engineer is responsible for developing advanced analytical,
+learning, and machine learning models.
+
+A Machine Learning Engineer strives to create the most appropriate machine learning
+models to achieve the highest levels of accuracy and predictive power.
+
+The job is to create algorithms that are able to efficiently extract, process, and
+store knowledge from large datasets, leveraging and extending other factors such as
+machine learning frameworks, data support systems, human-like models, and AI software.
+
+The most important feature of the job is to make use of the latest advances in machine
+learning techniques and algorithms, and to create systems that are capable of solving
+a variety of tasks in deep neural networks, sentiment generation, object recognition,
+and other complex applications across different domains.
 ```
 
-After:
-```
-An architect's job is to design, build, and maintain public spaces. An architect's job
-can be very challenging, requiring a combination of high-precision and advanced skills,
-and a strong understanding of the environment.
-
-An architect's approach to public spaces is limited due to the limited resources of the
-city; however, it can provide important input in designing, building, and maintaining
-the public spaces. An architect focuses on building sustainable buildings using design
-and construction materials, with a focus on materials that are both accessible and
-affordable for both public and private operators.
-
-An architect is also committed to ensuring that spaces are open to all levels of patrons
-and are not subject to construction constraints. An architect's goal in life is to
-create vibrant and sustainable public spaces, and for those with disabilitie, the
-project provides a unique opportunity for them to participate in a creative community.
-```
-
-----
-
-Perfect? Nope. Factual? Weeell, that’s a stretch. Improvement? You be the judge :)
+Perfect? That's a stretch. Improvement? Well, you be the judge :)
 
 ## 📝 License
 
