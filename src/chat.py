@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import textwrap
 from dataclasses import dataclass
 
@@ -7,6 +8,8 @@ import torch
 from src.conversation import Conversation
 from src.model import FineTuneableGPT2, GPTConfig
 from src.preprocess import ConversationPreprocessor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,6 +66,10 @@ class Chat:
 
     @classmethod
     def from_training_checkpoint(cls, checkpoint, config=None, device=None):
+        logger.info(
+            "Initializing Chat from training checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
+        )
         if config is None:
             config = ChatConfig()
         if device is None:
