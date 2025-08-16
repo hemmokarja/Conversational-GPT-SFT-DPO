@@ -32,14 +32,14 @@ DEFAULT_TRAINER_CONFIG = TrainerConfig(
     num_workers=1,
     prefetch_factor=2,
     pin_memory=False,
-    validation_samples=400,
+    validation_samples=1000,
     validation_interval=2_000,
     generate_sample_prompts=[
         "Can you give me instructions for making lasagna?",
         "What are the best attractions in Rome, Italy?",
         "What does a data scientist do?"
     ],
-    generate_max_tokens=2_000,
+    generate_max_tokens=10_000,
     generate_temperature=1.0,
     generate_top_k=50,
     checkpoint_filepath="checkpoints/checkpoint-medium-2.pt"
