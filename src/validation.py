@@ -93,7 +93,12 @@ class SFTValidator(BaseValidator):
                 )
 
             conversation = self.preprocessor.decode_tokens_to_conversation(generated)
-            completion = conversation.messages[-1].content
+            last_message = conversation.messages[-1]
+
+            completion = None
+            if last_message.role == "assistant":
+                completion = last_message.content
+
             samples.append({"prompt": prompt, "completion": completion})
 
         return samples
