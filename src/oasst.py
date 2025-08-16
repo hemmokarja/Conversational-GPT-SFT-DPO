@@ -74,7 +74,7 @@ def _parse_valid_conversations_from_tree(
     return conversations
 
 
-def _format_conversations(conversation):
+def _format_conversation(conversation):
     formatted = []
     for msg in conversation:
         role = "user" if msg["role"] == "prompter" else "assistant"
@@ -101,7 +101,7 @@ def _parse_conversations(dataset):
     
     # format to conventional structure
     conversations = [
-        _format_conversations(conversation) for conversation in conversations
+        _format_conversation(conversation) for conversation in conversations
     ]
 
     print(f"Extracted and parsed {len(conversations)} conversations")
