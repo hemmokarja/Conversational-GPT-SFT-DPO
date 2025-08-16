@@ -35,17 +35,28 @@ class _MessageFormatter:
         color = self.role_to_color[message.role]
         header = f"{color}{'=' * 10} {message.role} {'=' * 10}{self.reset_color}"
 
-        wrapped_content = textwrap.fill(
-            message.content, 
-            width=self.line_width,
-            initial_indent="  ",
-            subsequent_indent="  "
-        )
-    
+        # split content into lines first to preserve line breaks
+        lines = message.content.split('\n')
+        wrapped_lines = []
+        for line in lines:
+            if line.strip():
+                # non-empty line
+                wrapped = textwrap.fill(
+                    line,
+                    width=self.line_width,
+                    initial_indent="  ",
+                    subsequent_indent="  "
+                )
+                wrapped_lines.append(wrapped)
+            else:
+                # empty line
+                wrapped_lines.append("  ")  # Preserve empty lines with indent
+
+        wrapped_content = '\n'.join(wrapped_lines)
         return f"\n{header}\n{wrapped_content}\n"
 
     def print_message(self, message):
-        print(self._format_message(message), end='')
+        print(self._format_message(message), end="")
 
 
 class Chat:
