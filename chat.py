@@ -19,7 +19,7 @@ def main():
     print("Chat started! Press Ctrl+C to exit.")
     try:
         while True:
-            user_input = input("\n>: ").strip()
+            user_input = input("\n> ").strip()
 
             if not user_input:
                 continue
