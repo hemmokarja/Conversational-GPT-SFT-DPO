@@ -214,8 +214,12 @@ class ConversationPreprocessor:
 
         conversation = Conversation()
         for role, content in matches:
-            conversation.messages.append(Message(role.lower(), content.strip()))
-
+            if role.lower() == "user":
+                conversation.add_user_message(content.strip())
+            elif role.lower() == "assistant":
+                conversation.add_assistant_message(content.strip())
+            else:
+                raise ValueError(f"Unknown role '{role}' when parsing text")
         return conversation
     
     def _validate_conversation(self, conversation):
