@@ -6,6 +6,63 @@ import torch
 _TURN_SEPARATOR = "!END"
 
 
+class Message:
+    def __init__(self, role, content):
+        self.role = role
+        self.content = content
+
+    def __str__(self):
+        return f"{self.role.capitalize()}: {self.content}"
+
+    def __repr__(self):
+        return f"Message(role={self.role!r}, content={self.content!r})"
+    
+    def to_dict(self):
+        return {"role": self.role, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, msg_dict):
+        return cls(msg_dict["role"], msg_dict["content"])
+
+
+class Conversation:
+    def __init__(self):
+        self.messages = []
+
+    def add_user_message(self, content):
+        if self.messages and self.messages[-1].role == "user":
+            raise ValueError("Cannot add user message when last message is from user")
+        self.messages.append(Message("user", content))
+
+    def add_assistant_message(self, content):
+        if self.messages and self.messages[-1].role == "assistant":
+            raise ValueError(
+                "Cannot add assistant message when last message is from assistant"
+            )
+        self.messages.append(Message("assistant", content))
+
+    def __str__(self):
+        return "\n".join(str(m) for m in self.messages)
+
+    def __repr__(self):
+        return f"Conversation(messages={self.messages!r})"
+    
+    def to_dict(self):
+        return {"messages": [msg.to_dict() for msg in self.messages]}
+
+    @classmethod
+    def from_dict(cls, conv_dict):
+        conversation = cls()
+        for msg_dict in conv_dict["messages"]:
+            if msg_dict["role"] == "user":
+                conversation.add_user_message(msg_dict["content"])
+            elif msg_dict["role"] == "assistant":
+                conversation.add_assistant_message(msg_dict["content"])
+            else:
+                raise ValueError(f"Unknown role '{msg_dict['role']}' in message dict")
+        return conversation
+
+
 class ConversationPreprocessor:
     def __init__(
         self,
@@ -23,6 +80,8 @@ class ConversationPreprocessor:
         self.end_tokens = self.tokenizer.encode(turn_separator)
 
     def __call__(self, conversation, for_generation=False):
+        if isinstance(conversation, dict):
+            conversation = Conversation.from_dict(conversation)
         if for_generation:
             return self.encode_conversation_for_generation_to_tokens(conversation)
         return self.encode_conversation_to_tokens(conversation)
@@ -31,9 +90,7 @@ class ConversationPreprocessor:
         """
         Convert conversation to tokenized User/Assistant chat format for training.
 
-        Inputs are assumed to conform to format
-
-            {"messages": [{"role": "user|assistant", "content": "..."}]}
+        Inputs are assumed to be a Conversation object with Message objects.
         
         The conversations are then converted to chat format
 
@@ -43,7 +100,7 @@ class ConversationPreprocessor:
         And the text is then tokenized.
 
         Args:
-            conversation: {"messages": [{"role": "user|assistant", "content": "..."}]}
+            conversation: Conversation object
 
         Returns:
             {"input_ids": [...], "labels": [...]}
@@ -53,10 +110,8 @@ class ConversationPreprocessor:
         input_ids = []
         labels = []
 
-        for msg in conversation["messages"]:
-            role, content = msg["role"], msg["content"]
-
-            msg_ids, msg_labels = self._encode_message(role, content)
+        for msg in conversation.messages:
+            msg_ids, msg_labels = self._encode_message(msg.role, msg.content)
             input_ids.extend(msg_ids)
             labels.extend(msg_labels)
 
@@ -78,35 +133,35 @@ class ConversationPreprocessor:
         to prompt the model to continue generation.
 
         Args:
-            conversation: {"messages": [{"role": "user|assistant", "content": "..."}]}
+            conversation: Conversation object
 
         Returns:
             {"input_ids": [...]}
         """
         self._validate_conversation(conversation)
 
-        if len(conversation["messages"]) < 2:
+        if len(conversation.messages) < 2:
             raise ValueError(
                 f"Conversation must contain at least two messages (user, assistant), "
-                f"got {len(conversation['messages'])}"
+                f"got {len(conversation.messages)}"
             )
 
-        if conversation["messages"][-1]["role"] != "assistant":
+        if conversation.messages[-1].role != "assistant":
             raise ValueError(
                 "Conversation must end with assistant message for generation"
             )
 
         input_ids = []
-        messages = conversation["messages"]
+        messages = conversation.messages
 
         # process all messages except the last one normally
         for msg in messages[:-1]:
-            role, content = msg["role"], msg["content"]
+            role, content = msg.role, msg.content
             msg_ids, _ = self._encode_message(role, content)
             input_ids.extend(msg_ids)
 
         # process the final assistant message for generation
-        role, content = messages[-1]["role"], messages[-1]["content"]
+        role, content = messages[-1].role, messages[-1].content
         msg_ids = self._encode_message_for_generation(role, content)
         input_ids.extend(msg_ids)
 
@@ -114,7 +169,7 @@ class ConversationPreprocessor:
         return {"input_ids": input_ids}
 
     def decode_tokens_to_conversation(self, token_ids):
-        """Decode token IDs back to conversation format"""
+        """Decode token IDs back to Conversation object"""
         if isinstance(token_ids, torch.Tensor):
             if token_ids.dim() > 1:
                 if token_ids.size(0) > 1:
@@ -197,7 +252,7 @@ class ConversationPreprocessor:
 
     def _parse_chat_text(self, chat_text):
         """
-        Parse User/Assistant formatted text back into conversation format.
+        Parse User/Assistant formatted text back into Conversation object.
         Uses regex to extract role and content from each message block.
         """
         esc_end = re.escape(self.turn_separator)
@@ -206,21 +261,20 @@ class ConversationPreprocessor:
         pattern = rf"(user|assistant):\s*(.*?){esc_end}"
         matches = re.findall(pattern, chat_text, flags=re.DOTALL)
 
-        messages = []
+        conversation = Conversation()
         for role, content in matches:
-            normalized_role = role.lower()
-            messages.append({"role": normalized_role, "content": content.strip()})
+            conversation.messages.append(Message(role.lower(), content.strip()))
 
-        return {"messages": messages}
+        return conversation
     
     def _validate_conversation(self, conversation):
-        """Validate conversation format."""
-        if "messages" not in conversation:
-            raise ValueError("Conversation must have 'messages' key")
+        """Validate Conversation object format."""
+        if not isinstance(conversation, Conversation):
+            raise ValueError("conversation must be a Conversation object")
 
-        for i, msg in enumerate(conversation["messages"]):
-            if "role" not in msg or "content" not in msg:
-                raise ValueError(f"Message {i} must have 'role' and 'content' keys")
+        for i, msg in enumerate(conversation.messages):
+            if not isinstance(msg, Message):
+                raise ValueError(f"Message {i} must be a Message object")
 
-            if msg["role"] not in ["user", "assistant"]:
-                raise ValueError(f"Unknown role '{msg['role']}' in message {i}")
+            if msg.role not in ["user", "assistant"]:
+                raise ValueError(f"Unknown role '{msg.role}' in message {i}")
