@@ -3,14 +3,7 @@ from abc import ABC, abstractmethod
 import torch
 import numpy as np
 
-from src import text_util
-from src.preprocess import ConversationPreprocessor
-
-
-def _make_conversation_for_sample_generation(user_prompt):
-    conversation = text_util.make_user_conversation(user_prompt)
-    conversation = text_util.add_assistant_message(conversation, assistant_content=None)
-    return conversation
+from src.preprocess import ConversationPreprocessor, Conversation
 
 
 class BaseValidator(ABC):    
@@ -82,8 +75,10 @@ class SFTValidator(BaseValidator):
         samples = []
 
         for prompt in self.trainer_config.generate_sample_prompts:
-
-            conversation = _make_conversation_for_sample_generation(prompt)
+            
+            conversation = Conversation()
+            conversation.add_user_message(prompt)
+            conversation.add_assistant_message(None)
             processed = self.preprocessor(conversation, for_generation=True)
             x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
 
@@ -98,7 +93,7 @@ class SFTValidator(BaseValidator):
                 )
 
             conversation = self.preprocessor.decode_tokens_to_conversation(generated)
-            completion = text_util.get_last_assistant_message_content(conversation)
+            completion = conversation.messages[-1].content
             samples.append({"prompt": prompt, "completion": completion})
 
         return samples
