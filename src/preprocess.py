@@ -80,8 +80,14 @@ class ConversationPreprocessor:
         self.end_tokens = self.tokenizer.encode(turn_separator)
 
     def __call__(self, conversation, for_generation=False):
-        if isinstance(conversation, dict):
-            conversation = Conversation.from_dict(conversation)
+        if not isinstance(conversation, Conversation):
+            # handle both dict and LazyRow objects
+            if hasattr(conversation, "keys") or hasattr(conversation, "__getitem__"):
+                conv_dict = dict(conversation)
+                conversation = Conversation.from_dict(conv_dict)
+            else:
+                raise ValueError(f"Cannot convert {type(conversation)} to Conversation")
+
         if for_generation:
             return self.encode_conversation_for_generation_to_tokens(conversation)
         return self.encode_conversation_to_tokens(conversation)
@@ -270,7 +276,7 @@ class ConversationPreprocessor:
     def _validate_conversation(self, conversation):
         """Validate Conversation object format."""
         if not isinstance(conversation, Conversation):
-            raise ValueError("conversation must be a Conversation object")
+            raise ValueError(f"conversation must be a Conversation object, got {conversation}")
 
         for i, msg in enumerate(conversation.messages):
             if not isinstance(msg, Message):
