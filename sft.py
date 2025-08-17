@@ -5,7 +5,7 @@ from transformers import GPT2Tokenizer
 
 from src import oasst, text_util
 from src.model import GPT2
-from src.trainer import SFTTrainer, TrainerConfig
+from src.trainer import SFTTrainer, SFTTrainerConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +17,7 @@ OASST_VERSION = "pooled"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-DEFAULT_TRAINER_CONFIG = TrainerConfig(
+DEFAULT_TRAINER_CONFIG = SFTTrainerConfig(
     batch_size=64,
     gradient_acc_steps=8,
     log_interval=8,
