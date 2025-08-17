@@ -394,6 +394,7 @@ class Trainer:
         train_dataset,
         validation_dataset,
         device,
+        override_config=None,
         model_cls=FineTuneableGPT2,
     ):
         logger.info(
@@ -403,7 +404,11 @@ class Trainer:
         model = model_cls(model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-        trainer_config = TrainerConfig(**checkpoint["trainer_config"])
+        if override_config is None:
+            trainer_config = TrainerConfig(**checkpoint["trainer_config"])
+        else:
+            trainer_config = override_config
+
         trainer = cls(
             trainer_config,
             model,
