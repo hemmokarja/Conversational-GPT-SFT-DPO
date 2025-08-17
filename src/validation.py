@@ -5,7 +5,7 @@ import torch
 import numpy as np
 
 from src.generator import AssistantResponseGenerator
-from src.preprocess import ConversationPreprocessor, Conversation
+from src.preprocess import Conversation
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,8 @@ class BaseValidator(ABC):
         self.device = device
         self.prevent_tokens = prevent_tokens
 
-        self.preprocessor = ConversationPreprocessor(
-            self.tokenizer, self.model.config.ignored_idx
-        )
         self.generator = AssistantResponseGenerator(
-            self.model, self.preprocessor, self.ctx, self.device
+            self.model, self.tokenizer, self.ctx, self.device
         )
 
     @abstractmethod
@@ -91,7 +88,6 @@ class SFTValidator(BaseValidator):
                 max_tokens=self.trainer_config.generate_max_tokens,
                 temperature=self.trainer_config.generate_temperature,
                 top_k=self.trainer_config.generate_top_k,
-                end_tokens=self.preprocessor.end_tokens,
                 prevent_tokens=self.prevent_tokens,
                 max_retries=max_retries
             )
@@ -103,6 +99,26 @@ class SFTValidator(BaseValidator):
 
         return samples
 
+
+class DPOValidator(BaseValidator):
+    def __init__(
+        self,
+        model,
+        reference_model,
+        tokenizer,
+        trainer_config,
+        ctx,
+        device,
+        prevent_tokens=None,
+    ):
+        super().__init__(model, tokenizer, trainer_config, ctx, device, prevent_tokens)
+        self.reference_model = reference_model
+
+    def compute_batch_metrics(self, batch):
+        pass
+
+    def generate_samples(self):
+        pass
 
 # class DPOValidator(BaseValidator):
 #     def compute_batch_metrics(self, batch, model_output):

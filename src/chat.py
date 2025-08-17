@@ -8,7 +8,6 @@ import torch
 from src.conversation import Conversation
 from src.generator import AssistantResponseGenerator
 from src.model import FineTuneableGPT2, GPTConfig
-from src.preprocess import ConversationPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +67,6 @@ class Chat:
         self.device = device
 
         self.conversation = Conversation()
-        self.preprocessor = ConversationPreprocessor(tokenizer, model.config.ignored_idx)
         self.message_formatter = _MessageFormatter()
         self.ctx = (
             contextlib.nullcontext()
@@ -76,7 +74,7 @@ class Chat:
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
         self.generator = AssistantResponseGenerator(
-            model, self.preprocessor, self.ctx, device
+            model, tokenizer, self.ctx, device
         )
 
     @classmethod
@@ -111,7 +109,6 @@ class Chat:
             max_tokens=self.config.generate_max_tokens,
             temperature=self.config.temperature,
             top_k=self.config.top_k,
-            end_tokens=self.preprocessor.end_tokens,
             prevent_tokens=[self.tokenizer.pad_token_id],   
         )
         if new_conversation is None:

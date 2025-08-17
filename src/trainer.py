@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Tuple, Optional, List
 
@@ -12,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.model import FineTuneableGPT2, GPTConfig
-from src.validation import SFTValidator
+from src.validation import SFTValidator, DPOValidator
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms):
     print("\n" + "="*80 + "\n")
 
 
-class Trainer:
+class BaseTrainer(ABC):
     def __init__(
         self, config, model, tokenizer, train_dataset, validation_dataset, device
     ):
@@ -222,15 +223,6 @@ class Trainer:
             contextlib.nullcontext()
             if device.type == "cpu"
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-        )
-
-        self.validator = SFTValidator(
-            self.model,
-            self.tokenizer, 
-            self.config,
-            self.ctx,
-            device,
-            prevent_tokens=[tokenizer.pad_token_id],
         )
 
     def _get_next_batch(self, mode="train"):
@@ -282,7 +274,7 @@ class Trainer:
             self.samples_seen += batch["y"].size(0)
 
             with self.ctx:
-                _, loss = self.model(**batch)
+                _, loss = self._model_forward(batch)
                 loss = loss / self.config.gradient_acc_steps
                 loss.backward()
                 total_loss += loss.item()
@@ -300,24 +292,6 @@ class Trainer:
         prev_iter = (self.samples_seen - self.config.batch_size) // interval
         prev_iter = max(prev_iter, 0)
         return this_iter > prev_iter
-
-    def _save_checkpoint(self, validation_metrics=None):
-        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
-        if cp_dir and cp_dir != ".":
-            os.makedirs(cp_dir, exist_ok=True)
-
-        checkpoint = {
-            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "trainer_config": asdict(self.config),
-            "model_config": asdict(self.model.config),
-            "samples_seen": self.samples_seen,
-            "validation_metrics": validation_metrics,
-            "tokenizer": self.tokenizer,
-        }
-        torch.save(checkpoint, self.config.checkpoint_filepath)
-        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
 
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
@@ -358,7 +332,7 @@ class Trainer:
                 )
 
             if self._crossed_interval(self.config.validation_interval):
-                metrics, samples = self.validate()
+                metrics, samples = self._validate()
                 took_total = time.time() - t_start
                 took_hms = _to_hms(took_total)
                 _print_validation_results(
@@ -371,7 +345,7 @@ class Trainer:
 
         logger.info("Finished model training.")
 
-    def validate(self):
+    def _validate(self):
         self.model.eval()
         self.validation_iterator = iter(self.validation_loader)
         all_batch_metrics = []
@@ -386,6 +360,59 @@ class Trainer:
         samples = self.validator.generate_samples()
         self.model.train()
         return metrics, samples
+
+    @abstractmethod
+    def _model_forward(self, batch):
+        # propagate batch through model(s) and return logits and loss
+        pass
+
+    @abstractmethod
+    def _save_checkpoint(self):
+        pass
+
+    @abstractmethod
+    @classmethod
+    def from_checkpoint(cls):
+        # load checkpoint for continuing training
+        pass
+
+
+class SFTTrainer(BaseTrainer):
+    def __init__(
+        self, config, model, tokenizer, train_dataset, validation_dataset, device
+    ):
+        super().__init__(
+            config, model, tokenizer, train_dataset, validation_dataset, device
+        )
+        self.validator = SFTValidator(
+            self.model,
+            self.tokenizer, 
+            self.config,
+            self.ctx,
+            device,
+            prevent_tokens=[tokenizer.pad_token_id],
+        )
+
+    def _model_forward(self, batch):
+        return self.model(**batch)
+
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
 
     @classmethod
     def from_checkpoint(
@@ -422,3 +449,46 @@ class Trainer:
             trainer.best_loss = checkpoint["validation_metrics"]["loss"]
 
         return trainer
+
+
+class DPOTrainer:
+    def __init__(
+        self,
+        config,
+        model,
+        reference_model,
+        tokenizer,
+        train_dataset,
+        validation_dataset,
+        device,
+    ):
+        super().__init__(
+            config, model, tokenizer, train_dataset, validation_dataset, device
+        )
+        self.reference_model = reference_model
+
+        if config.compile:
+            self.reference_model = torch.compile(self.reference_model)
+
+        self.validator = DPOValidator(
+            self.model,
+            self.reference_model,
+            self.tokenizer, 
+            self.config,
+            self.ctx,
+            device,
+            prevent_tokens=[tokenizer.pad_token_id],
+        )
+
+    def _model_forward(self, batch):
+        logits, loss = self.model(**batch)
+        ref_logits, ref_loss = self.reference_model(**batch)
+        # apply DPO loss
+        pass
+
+    def _save_checkpoint(self, validation_metrics=None):
+        pass
+
+    @classmethod
+    def from_checkpoint(cls):
+        pass

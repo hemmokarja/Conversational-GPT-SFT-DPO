@@ -3,6 +3,7 @@ import logging
 import torch
 
 from src.conversation import Conversation
+from src.preprocess import GenerationConversationPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -10,11 +11,13 @@ logger = logging.getLogger(__name__)
 class AssistantResponseGenerator:
     """Class for generating Assistant responses"""
 
-    def __init__(self, model, preprocessor, ctx, device):
+    def __init__(self, model, tokenizer, ctx, device):
         self.model = model
-        self.preprocessor = preprocessor
         self.ctx = ctx
         self.device = device
+        self.preprocessor = GenerationConversationPreprocessor(
+            tokenizer, model.config.ignored_idx
+        )
 
     def _attempt_generation(
         self,
@@ -22,10 +25,9 @@ class AssistantResponseGenerator:
         max_tokens,
         temperature,
         top_k,
-        end_tokens,
         prevent_tokens
     ):
-        processed = self.preprocessor(conversation, for_generation=True)
+        processed = self.preprocessor(conversation)
         x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
         
         with self.ctx, torch.no_grad():
@@ -34,11 +36,11 @@ class AssistantResponseGenerator:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_k=top_k,
-                end_tokens=end_tokens,
+                end_tokens=self.preprocessor.end_tokens,
                 prevent_tokens=prevent_tokens,
             )
         
-        new_conversation = self.preprocessor.decode_tokens_to_conversation(generated)
+        new_conversation = self.preprocessor.decode_to_conversation(generated)
         last_message = new_conversation.messages[-1]  # Fixed: use new_conversation
         
         if last_message.role != "assistant" or last_message.content is None:
@@ -55,7 +57,6 @@ class AssistantResponseGenerator:
         max_tokens,
         temperature,
         top_k,
-        end_tokens,
         prevent_tokens,
         max_retries=5,
     ):
@@ -69,7 +70,6 @@ class AssistantResponseGenerator:
                     max_tokens,
                     temperature,
                     top_k,
-                    end_tokens,
                     prevent_tokens
                 )
                 return new_conversation

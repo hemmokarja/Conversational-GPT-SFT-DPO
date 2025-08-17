@@ -5,7 +5,7 @@ from collections import defaultdict
 import datasets
 from datasets import Dataset
 
-from src.preprocess import ConversationPreprocessor
+from src.preprocess import SFTConversationPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ def load_oasst_dataset(version, tokenizer, ignored_idx=-100, num_proc=4):
     datasets_ = []
     for conversations in [train_conversations, validation_conversations]:
         dataset = Dataset.from_list(conversations)
-        preprocessor = ConversationPreprocessor(tokenizer, ignored_idx)
+        preprocessor = SFTConversationPreprocessor(tokenizer, ignored_idx)
         datasets.logging.disable_progress_bar()
         preprocessed_dataset = dataset.map(preprocessor, num_proc=num_proc)
         datasets_.append(preprocessed_dataset)

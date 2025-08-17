@@ -5,7 +5,7 @@ from transformers import GPT2Tokenizer
 
 from src import oasst, text_util
 from src.model import GPT2
-from src.trainer import Trainer, TrainerConfig
+from src.trainer import SFTTrainer, TrainerConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,7 +58,7 @@ def initialize_trainer_from_scratch():
     fine_tuneable = model.to_fine_tuneable()
     fine_tuneable.add_padding_token()
 
-    trainer =  Trainer(
+    trainer =  SFTTrainer(
         DEFAULT_TRAINER_CONFIG,
         fine_tuneable,
         tokenizer,
@@ -74,7 +74,7 @@ def initalize_trainer_from_checkpoint():
     train_dataset, validation_dataset = oasst.load_oasst_dataset(
         OASST_VERSION, checkpoint["tokenizer"]
     )
-    trainer = Trainer.from_checkpoint(
+    trainer = SFTTrainer.from_checkpoint(
         checkpoint,
         train_dataset,
         validation_dataset,
