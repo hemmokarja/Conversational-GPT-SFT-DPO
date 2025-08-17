@@ -5,7 +5,6 @@ import torch
 
 from src.conversation import Conversation, Message
 
-
 _TURN_SEPARATOR = "!END"
 
 
@@ -262,45 +261,85 @@ class GenerationConversationPreprocessor(BaseConversationPreprocessor):
         return conversation
 
 
-class DPOSample:
-    def __init__(self, prompt, chosen, rejected):
-        self.prompt = prompt
-        self.chosen = chosen
-        self.rejected = rejected
-
-    def __repr__(self):
-        return (
-            f"Message(prompt={self.prompt!r}, chosen={self.chosen!r}), "
-            f"rejected={self.rejected!r}"
-        )
-
-    @classmethod
-    def from_dict(cls, sample_dict):
-        cls(sample_dict["prompt"], sample_dict["chosen"], sample_dict["rejected"])
-
-    def to_dict(self):
-        return {"prompt": self.prompt, "chosen": self.chosen, "rejected": self.rejected}
-
-
 class DPOPreprocessor:
-    def __init__(
-        self,
-        tokenizer,
-        ignored_idx=-100,
-        max_length=None,
-        turn_separator=_TURN_SEPARATOR,
-    ):
+    def __init__(self, tokenizer, max_length=None, turn_separator=_TURN_SEPARATOR):
         self.tokenizer = tokenizer
-        self.ignored_idx = ignored_idx
         self.max_length = (
             tokenizer.model_max_length if max_length is None else max_length
         )
         self.turn_separator = turn_separator
         self.end_tokens = self.tokenizer.encode(turn_separator)
 
-    def __call__(self, sample_dict):
-        sample = DPOSample.from_dict(sample_dict)
+    def __call__(self, sample):
         return self.encode_to_tokens(sample)
     
     def encode_to_tokens(self, sample):
-        pass
+        accepted_dict = self._encode_one(sample["prompt"], sample["accepted"])
+        rejected_dict = self._encode_one(sample["prompt"], sample["rejected"])
+        return {
+            "accepted_tokens": accepted_dict,
+            "rejected_tokens": rejected_dict,
+        }
+
+    def _encode_one(self, prompt, completion):
+        input_ids = []
+        completion_mask = []
+        
+        # user role
+        user_role = "user: "
+        user_role_tokens = self.tokenizer.encode(user_role, add_special_tokens=False)
+        input_ids.extend(user_role_tokens)
+        completion_mask.extend([0] * len(user_role_tokens))
+
+        # prompt
+        prompt_tokens = self.tokenizer.encode(
+            prompt,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=self.max_length
+        )
+        input_ids.extend(prompt_tokens)
+        completion_mask.extend([0] * len(prompt_tokens))
+
+        # user end token
+        end_tokens = self.tokenizer.encode(
+            self.turn_separator, add_special_tokens=False
+        )
+        input_ids.extend(end_tokens)
+        completion_mask.extend([0] * len(end_tokens))
+
+        # \n
+        input_ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
+        completion_mask.append(0)
+
+        # assistant role
+        assistant_role = "assistant: "
+        assistant_role_tokens = self.tokenizer.encode(
+            assistant_role, add_special_tokens=False
+        )
+        input_ids.extend(assistant_role_tokens)
+        completion_mask.extend([0] * len(assistant_role_tokens))
+
+        # completion
+        completion_tokens = self.tokenizer.encode(
+            completion,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=self.max_length
+        )
+        input_ids.extend(completion_tokens)
+        completion_mask.extend([1] * len(completion_tokens))
+
+        # completion end token
+        input_ids.extend(end_tokens)
+        completion_mask.extend([1] * len(end_tokens))
+
+        labels = input_ids[1:][:self.max_length]
+        input_ids = input_ids[:-1][:self.max_length]
+        completion_mask = completion_mask[1:][:self.max_length]  # matches labels
+
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+            "completion_mask": completion_mask,
+        }

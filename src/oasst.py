@@ -119,7 +119,7 @@ def _load_conversations(version):
     return conversations
 
 
-def load_oasst_dataset(version, tokenizer, ignored_idx=-100, num_proc=4):
+def load_oasst_dataset(version, tokenizer, ignored_idx=-100, num_proc=8):
     if version not in ["oasst1", "oasst2", "pooled"]:
         raise ValueError(
             f"version must be 'oasst1', 'oasst2', or 'pooled', got {version}"
@@ -130,10 +130,11 @@ def load_oasst_dataset(version, tokenizer, ignored_idx=-100, num_proc=4):
         oasst2_conversations = _load_conversations("oasst2")
         train_conversations = oasst1_conversations[0] + oasst2_conversations[0]
         validation_conversations = oasst1_conversations[1] + oasst2_conversations[1]
-        random.Random(42).shuffle(train_conversations)
-        random.Random(42).shuffle(validation_conversations)
     else:
         train_conversations, validation_conversations = _load_conversations(version)
+
+    random.Random(42).shuffle(train_conversations)
+    random.Random(42).shuffle(validation_conversations)
 
     logger.info(
         f"Loaded {len(train_conversations)} train and {len(validation_conversations)} "

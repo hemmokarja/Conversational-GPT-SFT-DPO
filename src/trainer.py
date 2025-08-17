@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from src import dpo_util
 from src.model import FineTuneableGPT2, GPTConfig
 from src.validation import SFTValidator, DPOValidator
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TrainerConfig:
+class SFTTrainerConfig:
     batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
     log_interval: int = 100
@@ -45,6 +46,11 @@ class TrainerConfig:
     def __post_init__(self):
         if self.batch_size % self.gradient_acc_steps != 0:
             raise ValueError("batch_size must be divisible by gradient_acc_steps")
+
+
+@dataclass
+class DPOTrainerConfig(SFTTrainerConfig):
+    beta: float = 0.1
 
 
 class _SFTCollator:
@@ -81,6 +87,43 @@ class _SFTCollator:
         }
 
 
+class _DPOCollator:
+    def __init__(self, padding_idx):
+        if padding_idx is None:
+            raise ValueError("padding_idx must not be None")
+        self.padding_idx = padding_idx
+
+    def __call__(self, batch):
+        max_len = max(
+            max(len(item["accepted_tokens"]["input_ids"]) for item in batch),
+            max(len(item["rejected_tokens"]["input_ids"]) for item in batch)
+        )
+
+        result = {"accepted": {}, "rejected": {}}
+
+        for split in ["accepted", "rejected"]:
+            split_data = {"x": [], "y": [], "completion_mask": [], "valid_mask": []}
+            for item in batch:
+                tokens = item[f"{split}_tokens"]
+
+                input_ids = tokens["input_ids"]
+                labels = tokens["labels"]
+                completion_mask = tokens["completion_mask"]
+
+                pad_len = max_len - len(input_ids)
+
+                split_data["x"].append(input_ids + [self.padding_idx] * pad_len)
+                split_data["y"].append(labels + [self.padding_idx] * pad_len)
+                split_data["completion_mask"].append(completion_mask + [0] * pad_len)
+                split_data["valid_mask"].append([1] * len(input_ids) + [0] * pad_len)
+
+            result[split] = {
+                k: torch.tensor(v, dtype=torch.long) for k, v in split_data.items()
+            }
+
+        return result
+
+
 def _get_learning_rate_stepwise(
     samples_seen, base_lr=3e-4, min_lr=1e-6, step_size=50_000_000, gamma=0.33
 ):
@@ -115,21 +158,6 @@ def _configure_optimizer(model, weight_decay, learning_rate, betas):
 
     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
     return optimizer, params
-
-
-def _make_loader(
-    dataset, padding_idx, ignored_idx, config, micro_batch_size, shuffle=False
-):
-    collator = _SFTCollator(padding_idx, ignored_idx)
-    return DataLoader(
-        dataset,
-        batch_size=micro_batch_size,
-        num_workers=config.num_workers,
-        prefetch_factor=config.prefetch_factor,
-        pin_memory=config.pin_memory,
-        shuffle=shuffle,
-        collate_fn=collator
-    )
 
 
 def _to_hms(took):
@@ -198,21 +226,24 @@ class BaseTrainer(ABC):
         self.optimizer = optimizer
         self.trainable_params = trainable_params
 
-        self.train_loader = _make_loader(
+        collator = self._get_collator(model.config)
+        self.train_loader = DataLoader(
             train_dataset,
-            model.config.padding_idx,
-            model.config.ignored_idx,
-            config,
-            self.micro_batch_size,
-            shuffle=True
+            batch_size=self.micro_batch_size,
+            num_workers=model.config.num_workers,
+            prefetch_factor=model.config.prefetch_factor,
+            pin_memory=model.config.pin_memory,
+            shuffle=True,
+            collate_fn=collator
         )
-        self.validation_loader = _make_loader(
+        self.validation_loader = DataLoader(
             validation_dataset,
-            model.config.padding_idx,
-            model.config.ignored_idx,
-            config,
-            self.micro_batch_size,
-            shuffle=False
+            batch_size=self.micro_batch_size,
+            num_workers=model.config.num_workers,
+            prefetch_factor=model.config.prefetch_factor,
+            pin_memory=model.config.pin_memory,
+            shuffle=False,
+            collate_fn=collator
         )
         self.train_iterator = iter(self.train_loader)
 
@@ -246,7 +277,19 @@ class BaseTrainer(ABC):
                 return next(self.validation_iterator)
 
     def _prepare_batch(self, batch):
-        return {k: t.to(self.device, non_blocking=True) for k, t in batch.items()}
+        """
+        Recursively move tensors to devide. Handles lists, tuples, dicts and
+        nested dicts.
+        """
+        if isinstance(batch, torch.Tensor):
+            return batch.to(self.device, non_blocking=True)
+        elif isinstance(batch, dict):
+            return {key: self._prepare_batch(value) for key, value in batch.items()}
+        elif isinstance(batch, (list, tuple)):
+            container_type = type(batch)
+            return container_type(self.prepare_batch(item) for item in batch)
+        else:
+            return batch
 
     def _set_optimizer_lr(self):
         lr = _get_learning_rate_stepwise(
@@ -274,7 +317,7 @@ class BaseTrainer(ABC):
             self.samples_seen += batch["y"].size(0)
 
             with self.ctx:
-                _, loss = self._model_forward(batch)
+                loss = self._model_forward(batch)
                 loss = loss / self.config.gradient_acc_steps
                 loss.backward()
                 total_loss += loss.item()
@@ -362,8 +405,12 @@ class BaseTrainer(ABC):
         return metrics, samples
 
     @abstractmethod
+    def _get_collator(self, model_config):
+        pass
+
+    @abstractmethod
     def _model_forward(self, batch):
-        # propagate batch through model(s) and return logits and loss
+        # propagate batch through model(s) and return loss
         pass
 
     @abstractmethod
@@ -392,8 +439,12 @@ class SFTTrainer(BaseTrainer):
             prevent_tokens=[tokenizer.pad_token_id],
         )
 
+    def _get_collator(self, model_config):
+        return _SFTCollator(model_config.padding_idx, model_config.ignored_idx)
+
     def _model_forward(self, batch):
-        return self.model(**batch)
+        _, loss = self.model(**batch)
+        return loss
 
     def _save_checkpoint(self, validation_metrics=None):
         cp_dir = os.path.dirname(self.config.checkpoint_filepath)
@@ -431,7 +482,7 @@ class SFTTrainer(BaseTrainer):
         model.load_state_dict(checkpoint["model_state_dict"])
 
         if override_config is None:
-            trainer_config = TrainerConfig(**checkpoint["trainer_config"])
+            trainer_config = SFTTrainerConfig(**checkpoint["trainer_config"])
         else:
             trainer_config = override_config
 
@@ -450,7 +501,7 @@ class SFTTrainer(BaseTrainer):
         return trainer
 
 
-class DPOTrainer:
+class DPOTrainer(BaseTrainer):
     def __init__(
         self,
         config,
@@ -479,15 +530,47 @@ class DPOTrainer:
             prevent_tokens=[tokenizer.pad_token_id],
         )
 
+    def _get_collator(self, model_config):
+        return _DPOCollator(model_config.padding_idx)
+
     def _model_forward(self, batch):
-        logits, loss = self.model(**batch)
-        ref_logits, ref_loss = self.reference_model(**batch)
-        # apply DPO loss
-        pass
+        accepted, rejected = batch["accepted"], batch["rejected"]
+
+        y_accepted = accepted["y"]
+        y_rejected = rejected["y"]
+        cmask_accepted = accepted["completion_mask"]
+        cmask_rejected = rejected["completion_mask"]
+
+        exclude_keys = {"labels", "completion_mask"}
+        accepted_inputs = {k: v for k, v in accepted.items() if k not in exclude_keys}
+        rejected_inputs = {k: v for k, v in rejected.items() if k not in exclude_keys}
+
+        logits_accepted, _ = self.model(**accepted_inputs)
+        logits_rejected, _ = self.model(**rejected_inputs)
+
+        with torch.no_grad():
+            logits_accepted_ref, _ = self.reference_model(**accepted_inputs)
+            logits_rejected_ref, _ = self.reference_model(**rejected_inputs)
+
+        return dpo_util.dpo_loss(
+            logits_accepted,
+            logits_rejected,
+            logits_accepted_ref,
+            logits_rejected_ref,
+            y_accepted,
+            y_rejected,
+            cmask_accepted,
+            cmask_rejected,
+            self.config.beta
+        )
 
     def _save_checkpoint(self, validation_metrics=None):
         pass
 
     @classmethod
     def from_checkpoint(cls):
+        pass
+
+    @classmethod
+    def init_from_sft_checkpoint(cls):
         pass
