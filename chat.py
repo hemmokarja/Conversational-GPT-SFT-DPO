@@ -16,9 +16,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chat = Chat.from_training_checkpoint(checkpoint, config, device)
 
-    print(
-        "Chat started! Type `/new` to start a new chat. Press Ctrl+C to exit."
-    )
+    print("Chat started! Type `/new` to start a new chat. Press Ctrl+C to exit.")
     try:
         while True:
             user_input = input("\n> ").strip()
