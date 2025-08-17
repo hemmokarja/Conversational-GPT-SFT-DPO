@@ -1,9 +1,13 @@
+import logging
+import random
 from collections import defaultdict
 
 import datasets
 from datasets import Dataset
 
 from src.preprocess import ConversationPreprocessor
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_valid_conversations_from_tree(
@@ -103,21 +107,41 @@ def _parse_conversations(dataset):
     conversations = [
         _format_conversation(conversation) for conversation in conversations
     ]
-
-    print(f"Extracted and parsed {len(conversations)} conversations")
-
     return conversations
 
 
-def load_oasst_dataset(name, tokenizer, ignored_idx=-100, num_proc=4):
-    if name not in ["oasst1", "oasst2"]:
-        raise ValueError("name must be 'oasst1' or 'oasst2'")
-    
-    full_dataset = datasets.load_dataset(f"OpenAssistant/{name}")
+def _load_conversations(version):
+    full_dataset = datasets.load_dataset(f"OpenAssistant/{version}")
+    conversations = []
+    for split in ["train", "validation"]:
+        split_conversations = _parse_conversations(full_dataset[split])
+        conversations.append(split_conversations)
+    return conversations
+
+
+def load_oasst_dataset(version, tokenizer, ignored_idx=-100, num_proc=4):
+    if version not in ["oasst1", "oasst2", "pooled"]:
+        raise ValueError(
+            f"version must be 'oasst1', 'oasst2', or 'pooled', got {version}"
+        )
+
+    if version == "pooled":
+        oasst1_conversations = _load_conversations("oasst1")
+        oasst2_conversations = _load_conversations("oasst2")
+        train_conversations = oasst1_conversations[0] + oasst2_conversations[0]
+        validation_conversations = oasst1_conversations[1] + oasst2_conversations[1]
+        random.Random(42).shuffle(train_conversations)
+        random.Random(42).shuffle(validation_conversations)
+    else:
+        train_conversations, validation_conversations = _load_conversations(version)
+
+    logger.info(
+        f"Loaded {len(train_conversations)} train and {len(validation_conversations)} "
+        "validation conversations"
+    )
 
     datasets_ = []
-    for split in ["train", "validation"]:
-        conversations = _parse_conversations(full_dataset[split])
+    for conversations in [train_conversations, validation_conversations]:
         dataset = Dataset.from_list(conversations)
         preprocessor = ConversationPreprocessor(tokenizer, ignored_idx)
         datasets.logging.disable_progress_bar()
