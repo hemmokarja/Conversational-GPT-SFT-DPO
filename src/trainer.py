@@ -1,5 +1,6 @@
-import contextlib
 import collections
+import contextlib
+import copy
 import datetime
 import logging
 import os
@@ -13,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src import dpo_util
-from src.model import FineTuneableGPT2, GPTConfig
+from src.model import FineTuneableGPT2, GPTConfig, LoRAConfig
 from src.validation import SFTValidator, DPOValidator
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class SFTTrainerConfig:
 
 @dataclass
 class DPOTrainerConfig(SFTTrainerConfig):
+    sft_checkpoint_filepath: str
     beta: float = 0.1
 
 
@@ -404,6 +406,24 @@ class BaseTrainer(ABC):
         self.model.train()
         return metrics, samples
 
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
+
     @abstractmethod
     def _get_collator(self, model_config):
         pass
@@ -411,10 +431,6 @@ class BaseTrainer(ABC):
     @abstractmethod
     def _model_forward(self, batch):
         # propagate batch through model(s) and return loss
-        pass
-
-    @abstractmethod
-    def _save_checkpoint(self):
         pass
 
     @abstractmethod
@@ -446,24 +462,6 @@ class SFTTrainer(BaseTrainer):
         _, loss = self.model(**batch)
         return loss
 
-    def _save_checkpoint(self, validation_metrics=None):
-        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
-        if cp_dir and cp_dir != ".":
-            os.makedirs(cp_dir, exist_ok=True)
-
-        checkpoint = {
-            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "trainer_config": asdict(self.config),
-            "model_config": asdict(self.model.config),
-            "samples_seen": self.samples_seen,
-            "validation_metrics": validation_metrics,
-            "tokenizer": self.tokenizer,
-        }
-        torch.save(checkpoint, self.config.checkpoint_filepath)
-        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
-
     @classmethod
     def from_checkpoint(
         cls,
@@ -474,7 +472,8 @@ class SFTTrainer(BaseTrainer):
         override_config=None,
     ):
         logger.info(
-            f"Initializing Trainer from checkpoint saved on '{checkpoint['datetime']}'"
+            f"Initializing SFTTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
         )
         model_config = GPTConfig(**checkpoint["model_config"])
         model = FineTuneableGPT2(model_config)
@@ -563,13 +562,84 @@ class DPOTrainer(BaseTrainer):
             self.config.beta
         )
 
-    def _save_checkpoint(self, validation_metrics=None):
-        pass
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint,
+        train_dataset,
+        validation_dataset,
+        device,
+        override_config=None,
+    ):
+        # continue training from checkpoint
+        logger.info(
+            f"Initializing DPOTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
+        )
+
+        sft_checkpoint = torch.load(
+            checkpoint["sft_checkpoint_fileapth"],
+            weights_only=False,
+            map_location="cpu",
+        )
+        reference_model_config = GPTConfig(**sft_checkpoint["model_config"])
+        reference_model = FineTuneableGPT2(reference_model_config)
+        reference_model.load_state_dict(sft_checkpoint["model_state_dict"])
+
+        model_config = GPTConfig(**checkpoint["model_config"])
+        lora_config = LoRAConfig(**checkpoint["lora_config"])
+        model = FineTuneableGPT2(model_config)
+        model.apply_lora(lora_config)
+        model.load_state_dict(checkpoint["model_state_dict"])
+
+        if override_config is None:
+            trainer_config = DPOTrainerConfig(**checkpoint["trainer_config"])
+        else:
+            trainer_config = override_config
+
+        trainer = cls(
+            trainer_config,
+            model,
+            reference_model,
+            checkpoint["tokenizer"],
+            train_dataset,
+            validation_dataset,
+            device,
+        )
+        trainer.samples_seen = checkpoint["samples_seen"]
+        if checkpoint["validation_metrics"] is not None:
+            trainer.best_loss = checkpoint["validation_metrics"]["loss"]
+
+        return trainer
 
     @classmethod
-    def from_checkpoint(cls):
-        pass
+    def init_from_sft_checkpoint(
+        cls,
+        checkpoint,
+        config,
+        lora_config,
+        train_dataset,
+        validation_dataset,
+        device,
+    ):
+        # initialize a new DPO run from SFT checkpoint
+        logger.info(
+            f"Initializing DPOTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
+        )
+        model_config = GPTConfig(**checkpoint["model_config"])
+        reference_model = FineTuneableGPT2(model_config)
+        reference_model.load_state_dict(checkpoint["model_state_dict"])
 
-    @classmethod
-    def init_from_sft_checkpoint(cls):
-        pass
+        model = copy.deepcopy(reference_model)
+        model.apply_lora(lora_config)
+
+        return cls(
+            config,
+            model,
+            reference_model,
+            checkpoint["tokenizer"],
+            train_dataset,
+            validation_dataset,
+            device,
+        )
