@@ -33,7 +33,7 @@ class BaseConversationPreprocessor(ABC):
                 conversation = Conversation.from_dict(conv_dict)
             else:
                 raise ValueError(f"Cannot convert {type(conversation)} to Conversation")
-        self.encode_to_tokens(conversation)
+        return self.encode_to_tokens(conversation)
 
     def _encode_message(self, message):
         """Encode a single message into token IDs and labels."""
@@ -99,7 +99,7 @@ class SFTConversationPreprocessor(BaseConversationPreprocessor):
         max_length=None,
         turn_separator=_TURN_SEPARATOR,
     ):
-        super.__init__(tokenizer, ignored_idx, max_length, turn_separator)
+        super().__init__(tokenizer, ignored_idx, max_length, turn_separator)
 
     def encode_to_tokens(self, conversation):
         """
@@ -147,7 +147,7 @@ class GenerationConversationPreprocessor(BaseConversationPreprocessor):
         max_length=None,
         turn_separator=_TURN_SEPARATOR,
     ):
-        super.__init__(tokenizer, ignored_idx, max_length, turn_separator)
+        super().__init__(tokenizer, ignored_idx, max_length, turn_separator)
 
     def encode_to_tokens(self, conversation):
         """

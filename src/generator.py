@@ -29,7 +29,7 @@ class AssistantResponseGenerator:
     ):
         processed = self.preprocessor(conversation)
         x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
-        
+
         with self.ctx, torch.no_grad():
             generated = self.model.generate(
                 x,
@@ -39,10 +39,10 @@ class AssistantResponseGenerator:
                 end_tokens=self.preprocessor.end_tokens,
                 prevent_tokens=prevent_tokens,
             )
-        
+
         new_conversation = self.preprocessor.decode_to_conversation(generated)
         last_message = new_conversation.messages[-1]  # Fixed: use new_conversation
-        
+
         if last_message.role != "assistant" or last_message.content is None:
             raise ValueError("Generated message is not a valid assistant response")
         

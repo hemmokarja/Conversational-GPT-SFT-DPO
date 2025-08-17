@@ -371,7 +371,6 @@ class BaseTrainer(ABC):
         pass
 
     @abstractmethod
-    @classmethod
     def from_checkpoint(cls):
         # load checkpoint for continuing training
         pass
