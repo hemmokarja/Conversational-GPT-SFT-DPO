@@ -98,42 +98,6 @@ class Chat:
         message = self.conversation.messages[-1]
         self.message_formatter.print_message(message)
 
-    def _generate(self, max_retries=5):
-
-
-
-        processed = self.preprocessor(self.conversation, for_generation=True)
-        x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
-
-        for i in range(max_retries):
-
-            with self.ctx, torch.no_grad():
-                generated = self.model.generate(
-                    x,
-                    max_tokens=self.config.generate_max_tokens,
-                    temperature=self.config.temperature,
-                    top_k=self.config.top_k,
-                    end_tokens=self.preprocessor.end_tokens,
-                    prevent_tokens=[self.tokenizer.pad_token_id],
-                )
-
-            new_conversation = self.preprocessor.decode_tokens_to_conversation(
-                generated
-            )
-
-            assistant_response = new_conversation.messages[-1].content
-            if assistant_response is not None:
-                break
-
-            if i == max_retries - 1:
-                print(
-                    f"Assistant failed to generate response after {max_retries} "
-                    "retries. You can try sending another message."
-                )
-                self.conversation.delete_last_message()  # pop last user message
-                return new_conversation, False
-        return new_conversation, True
-
     def reset(self):
         self.conversation = Conversation()
 

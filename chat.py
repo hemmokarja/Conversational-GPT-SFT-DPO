@@ -6,7 +6,7 @@ from src.chat import Chat, ChatConfig
 
 logging.basicConfig(level=logging.INFO)
 
-CHECKPOINT_PATH = "checkpoints/checkpoint-medium-2.pt"
+CHECKPOINT_PATH = "checkpoints/checkpoint-medium-pooled.pt"
 
 
 def main():
