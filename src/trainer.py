@@ -472,13 +472,12 @@ class SFTTrainer(BaseTrainer):
         validation_dataset,
         device,
         override_config=None,
-        model_cls=FineTuneableGPT2,
     ):
         logger.info(
             f"Initializing Trainer from checkpoint saved on '{checkpoint['datetime']}'"
         )
         model_config = GPTConfig(**checkpoint["model_config"])
-        model = model_cls(model_config)
+        model = FineTuneableGPT2(model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
 
         if override_config is None:
