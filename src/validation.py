@@ -1,9 +1,13 @@
+import logging
 from abc import ABC, abstractmethod
 
 import torch
 import numpy as np
 
+from src.generator import AssistantResponseGenerator
 from src.preprocess import ConversationPreprocessor, Conversation
+
+logger = logging.getLogger(__name__)
 
 
 class BaseValidator(ABC):    
@@ -24,7 +28,10 @@ class BaseValidator(ABC):
         self.prevent_tokens = prevent_tokens
 
         self.preprocessor = ConversationPreprocessor(
-            tokenizer, model.config.ignored_idx
+            self.tokenizer, self.model.config.ignored_idx
+        )
+        self.generator = AssistantResponseGenerator(
+            self.model, self.preprocessor, self.ctx, self.device
         )
 
     @abstractmethod
@@ -71,34 +78,27 @@ class SFTValidator(BaseValidator):
             "perplexity": np.exp(loss.item())
         }
 
-    def generate_samples(self):
+    def generate_samples(self, max_retries=5):
         samples = []
 
         for prompt in self.trainer_config.generate_sample_prompts:
-            
             conversation = Conversation()
             conversation.add_user_message(prompt)
             conversation.add_assistant_message(None)
-            processed = self.preprocessor(conversation, for_generation=True)
-            x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
 
-            with self.ctx, torch.no_grad():
-                generated = self.model.generate(
-                    x,
-                    max_tokens=self.trainer_config.generate_max_tokens,
-                    temperature=self.trainer_config.generate_temperature,
-                    top_k=self.trainer_config.generate_top_k,
-                    end_tokens=self.preprocessor.end_tokens,
-                    prevent_tokens=self.prevent_tokens,
-                )
+            new_conversation = self.generator.generate(
+                conversation,
+                max_tokens=self.trainer_config.generate_max_tokens,
+                temperature=self.trainer_config.generate_temperature,
+                top_k=self.trainer_config.generate_top_k,
+                end_tokens=self.preprocessor.end_tokens,
+                prevent_tokens=self.prevent_tokens,
+                max_retries=max_retries
+            )
+            if new_conversation is None:
+                continue
 
-            conversation = self.preprocessor.decode_tokens_to_conversation(generated)
-            last_message = conversation.messages[-1]
-
-            completion = None
-            if last_message.role == "assistant":
-                completion = last_message.content
-
+            completion = new_conversation.messages[-1].content
             samples.append({"prompt": prompt, "completion": completion})
 
         return samples

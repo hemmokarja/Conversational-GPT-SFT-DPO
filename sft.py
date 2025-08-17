@@ -9,11 +9,11 @@ from src.trainer import Trainer, TrainerConfig
 
 logging.basicConfig(level=logging.INFO)
 
-CHECKPOINT_PATH = "checkpoints/checkpoint-medium-2.pt"  # if None, start from scratch
-N_SAMPLES_TRAIN = 20_100
+CHECKPOINT_PATH = "checkpoints/checkpoint-medium-pooled.pt"  # if None, start from scratch
+N_SAMPLES_TRAIN = 30_100
 
 BASE_MODEL = "gpt2-medium"
-OASST_VERSION = "oasst1"
+OASST_VERSION = "pooled"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -36,13 +36,13 @@ DEFAULT_TRAINER_CONFIG = TrainerConfig(
     validation_interval=2_000,
     generate_sample_prompts=[
         "Can you give me instructions for making lasagna?",
-        "What are the best attractions in Rome, Italy?",
+        "I'm travelling to Rome, Italy next summer, what are the best attractions there?",
         "What does a data scientist do?"
     ],
     generate_max_tokens=10_000,
     generate_temperature=1.0,
     generate_top_k=50,
-    checkpoint_filepath="checkpoints/checkpoint-medium-2.pt"
+    checkpoint_filepath="checkpoints/checkpoint-medium-pooled.pt"
 )
 
 

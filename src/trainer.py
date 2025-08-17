@@ -326,7 +326,9 @@ class Trainer:
 
         n_iter = n_samples // self.config.batch_size + 1
 
-        recent_losses = collections.deque(maxlen=self.config.log_interval)
+        recent_losses = collections.deque(
+            maxlen=self.config.log_interval // self.config.batch_size
+        )
         samples_seen_prev = 0
         t0 = time.time()
         t_start = t0

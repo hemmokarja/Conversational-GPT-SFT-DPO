@@ -212,6 +212,11 @@ class ConversationPreprocessor:
         pattern = rf"(user|assistant):\s*(.*?){esc_end}"
         matches = re.findall(pattern, chat_text, flags=re.DOTALL)
 
+        if len(matches) == 0:
+            raise ValueError(
+                f"Parsing failed, did not find any matches. Original text: {chat_text}"
+            )
+
         conversation = Conversation()
         for role, content in matches:
             if role.lower() == "user":

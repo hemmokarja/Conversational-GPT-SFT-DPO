@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 
 from src.conversation import Conversation
+from src.generator import AssistantResponseGenerator
 from src.model import FineTuneableGPT2, GPTConfig
 from src.preprocess import ConversationPreprocessor
 
@@ -68,12 +69,15 @@ class Chat:
 
         self.conversation = Conversation()
         self.preprocessor = ConversationPreprocessor(tokenizer, model.config.ignored_idx)
+        self.message_formatter = _MessageFormatter()
         self.ctx = (
             contextlib.nullcontext()
             if device.type == "cpu"
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
         )
-        self.message_formatter = _MessageFormatter()
+        self.generator = AssistantResponseGenerator(
+            model, self.preprocessor, self.ctx, device
+        )
 
     @classmethod
     def from_training_checkpoint(cls, checkpoint, config=None, device=None):
@@ -95,6 +99,9 @@ class Chat:
         self.message_formatter.print_message(message)
 
     def _generate(self, max_retries=5):
+
+
+
         processed = self.preprocessor(self.conversation, for_generation=True)
         x = torch.tensor(processed["input_ids"], device=self.device).unsqueeze(0)
 
@@ -134,9 +141,21 @@ class Chat:
         self.conversation.add_user_message(text)
         self._display_last_message()
         self.conversation.add_assistant_message(None)
-        new_conversation, success = self._generate(max_retries)
-        if success:
+        
+        new_conversation = self.generator.generate(
+            self.conversation,
+            max_tokens=self.config.generate_max_tokens,
+            temperature=self.config.temperature,
+            top_k=self.config.top_k,
+            end_tokens=self.preprocessor.end_tokens,
+            prevent_tokens=[self.tokenizer.pad_token_id],   
+        )
+        if new_conversation is None:
+            self.conversation.delete_last_message()
+            print(
+                f"Assistant failed to generate response after {max_retries} "
+                "retries. Try sending another message!"
+            )
+        else:
             self.conversation = new_conversation
             self._display_last_message()
-            return True
-        return False
