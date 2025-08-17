@@ -27,8 +27,8 @@ def _compute_completion_logprobs(logits, y, completion_mask):
 
 
 def dpo_loss(
-    logits_accepted,
-    logits_rejected,
+    logits_accepted_policy,
+    logits_rejected_policy,
     logits_accepted_reference,
     logits_rejected_reference,
     y_accepted,
@@ -38,10 +38,10 @@ def dpo_loss(
     beta=0.1,
 ):
     logprobs_accepted = _compute_completion_logprobs(
-        logits_accepted, y_accepted, cmask_accepted
+        logits_accepted_policy, y_accepted, cmask_accepted
     )
     logprobs_rejected = _compute_completion_logprobs(
-        logits_rejected, y_rejected, cmask_rejected
+        logits_rejected_policy, y_rejected, cmask_rejected
     )
     logprobs_accepted_ref = _compute_completion_logprobs(
         logits_accepted_reference, y_accepted, cmask_accepted
