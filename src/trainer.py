@@ -51,8 +51,12 @@ class SFTTrainerConfig:
 
 @dataclass
 class DPOTrainerConfig(SFTTrainerConfig):
-    sft_checkpoint_filepath: str
+    sft_checkpoint_filepath: str = None
     beta: float = 0.1
+
+    def __post_init__(self):
+        if self.sft_checkpoint_filepath is None:
+            raise ValueError("Must specify sft_checkpoint_filepath")
 
 
 class _SFTCollator:

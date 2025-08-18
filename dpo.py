@@ -1,0 +1,100 @@
+import logging
+
+import torch
+from transformers import GPT2Tokenizer
+
+from src import ultrafeedback
+from src.model import LoRAConfig
+from src.trainer import DPOTrainer, DPOTrainerConfig
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
+N_SAMPLES_TRAIN = 10_000
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
+    batch_size=8,
+    gradient_acc_steps=8,
+    log_interval=8,
+    compile=False,
+    base_learning_rate=1e-4,
+    min_learning_rate=1e-6,
+    lr_step_size=600,
+    lr_gamma=0.75,
+    weight_decay=0.01,
+    betas=(0.9, 0.95),
+    grad_clip=1.0,
+    num_workers=1,
+    prefetch_factor=2,
+    pin_memory=False,
+    validation_samples=1000,
+    validation_interval=2_000,
+    generate_sample_prompts=[
+        "Can you give me instructions for making lasagna?",
+        "I'm travelling to Rome, Italy next summer, what are the best attractions there?",
+        "What does a data scientist do?"
+    ],
+    generate_max_tokens=10_000,
+    generate_temperature=1.0,
+    generate_top_k=50,
+    checkpoint_filepath="checkpoints/dpo/checkpoint-medium.pt",
+    sft_checkpoint_filepath="checkpoints/checkpoint-medium-pooled.pt",
+    beta=0.1,
+)
+LORA_CONFIG = LoRAConfig(
+    r=8,
+    alpha=32
+)
+
+
+def initialize_trainer_from_sft_checkpoint():
+    logger.info("Starting a new DPO run from a SFT checkpoint")
+
+    checkpoint = torch.load(
+        DEFAULT_TRAINER_CONFIG.sft_checkpoint_filepath,
+        weights_only=False,
+        map_location="cpu"
+    )
+    train_dataset, validation_dataset = ultrafeedback.load_ultrafeedback_dataset(
+        checkpoint["tokenizer"]
+    )
+    trainer = DPOTrainer.init_from_sft_checkpoint(
+        checkpoint,
+        DEFAULT_TRAINER_CONFIG,
+        LORA_CONFIG,
+        train_dataset,
+        validation_dataset,
+        DEVICE,
+    )
+    return trainer
+
+
+def initialize_trainer_from_dpo_checkpoint():
+    logger.info("Continuing DPO run from a checkpoint")
+
+    checkpoint = torch.load(CHECKPOINT_PATH, weights_only=False, map_location="cpu")
+    train_dataset, validation_dataset = ultrafeedback.load_ultrafeedback_dataset(
+        checkpoint["tokenizer"]
+    )
+    trainer = DPOTrainer.from_checkpoint(
+        checkpoint,
+        train_dataset,
+        validation_dataset,
+        DEVICE,
+    )
+    return trainer
+
+
+def main():
+    if CHECKPOINT_PATH is None:
+        trainer = initialize_trainer_from_sft_checkpoint()
+    else:
+        trainer = initialize_trainer_from_dpo_checkpoint()
+    trainer.train(N_SAMPLES_TRAIN)
+
+
+if __name__ == "__main__":
+    main()

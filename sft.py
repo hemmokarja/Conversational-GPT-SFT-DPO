@@ -8,6 +8,7 @@ from src.model import GPT2
 from src.trainer import SFTTrainer, SFTTrainerConfig
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = "checkpoints/checkpoint-medium-pooled.pt"  # if None, start from scratch
 N_SAMPLES_TRAIN = 30_100
@@ -15,7 +16,8 @@ N_SAMPLES_TRAIN = 30_100
 BASE_MODEL = "gpt2-medium"
 OASST_VERSION = "pooled"
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")
 
 DEFAULT_TRAINER_CONFIG = SFTTrainerConfig(
     batch_size=64,
@@ -47,6 +49,8 @@ DEFAULT_TRAINER_CONFIG = SFTTrainerConfig(
 
 
 def initialize_trainer_from_scratch():
+    logger.info("Starting a new SFT run from a pre-trained GPT2")
+
     tokenizer = GPT2Tokenizer.from_pretrained(BASE_MODEL)
     text_util.add_pad_token_to_tokenizer(tokenizer)
 
@@ -70,6 +74,8 @@ def initialize_trainer_from_scratch():
 
 
 def initalize_trainer_from_checkpoint():
+    logger.info("Continuing SFT run from a checkpoint")
+
     checkpoint = torch.load(CHECKPOINT_PATH, weights_only=False, map_location="cpu")
     train_dataset, validation_dataset = oasst.load_oasst_dataset(
         OASST_VERSION, checkpoint["tokenizer"]
