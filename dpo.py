@@ -11,18 +11,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
-N_SAMPLES_TRAIN = 10_000
+N_SAMPLES_TRAIN = 60_100
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
-    batch_size=8,
-    gradient_acc_steps=8,
+    batch_size=64,
+    gradient_acc_steps=16,
     log_interval=8,
     compile=False,
-    base_learning_rate=1e-4,
+    base_learning_rate=1e-5,
     min_learning_rate=1e-6,
-    lr_step_size=600,
+    lr_step_size=1000,
     lr_gamma=0.75,
     weight_decay=0.01,
     betas=(0.9, 0.95),
@@ -30,7 +30,7 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     num_workers=1,
     prefetch_factor=2,
     pin_memory=False,
-    validation_samples=1000,
+    validation_samples=2000,
     validation_interval=2_000,
     generate_sample_prompts=[
         "Can you give me instructions for making lasagna?",

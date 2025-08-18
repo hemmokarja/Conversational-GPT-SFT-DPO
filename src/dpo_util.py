@@ -1,5 +1,7 @@
 from torch.nn import functional as F
 
+from src import train_util
+
 
 def _compute_logprobs(logits, y):
     """
@@ -20,9 +22,9 @@ def _compute_logprobs(logits, y):
 
 def _compute_completion_logprobs(logits, y, completion_mask):
     logprobs = _compute_logprobs(logits, y)  # [B, S]
-    
+
     # sum logprobs only for completion tokens
-    completion_logprobs = (logprobs * completion_mask).sum(dim=-1)  # [B]
+    completion_logprobs = (logprobs * completion_mask).sum(dim=1)  # [B]
     return completion_logprobs
 
 
@@ -49,8 +51,17 @@ def dpo_loss(
     logprobs_rejected_ref = _compute_completion_logprobs(
         logits_rejected_reference, y_rejected, cmask_rejected
     )
+    train_util.check_finite("logprobs_accepted", logprobs_accepted)
+    train_util.check_finite("logprobs_rejected", logprobs_rejected)
+    train_util.check_finite("logprobs_accepted_ref", logprobs_accepted_ref)
+    train_util.check_finite("logprobs_rejected_ref", logprobs_rejected_ref)
+
     policy_logratios = logprobs_accepted - logprobs_rejected
     reference_logratios = logprobs_accepted_ref - logprobs_rejected_ref
     logits = beta * (policy_logratios - reference_logratios)
+    train_util.check_finite("logits", logits)
+
     loss = -F.logsigmoid(logits).mean()
+    train_util.check_finite("loss", loss)
+
     return loss

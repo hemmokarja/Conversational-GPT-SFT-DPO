@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src import dpo_util
+from src import dpo_util, train_util
 from src.model import FineTuneableGPT2, GPTConfig, LoRAConfig
 from src.validation import SFTValidator, DPOValidator
 
@@ -293,7 +293,7 @@ class BaseTrainer(ABC):
             return {key: self._prepare_batch(value) for key, value in batch.items()}
         elif isinstance(batch, (list, tuple)):
             container_type = type(batch)
-            return container_type(self.prepare_batch(item) for item in batch)
+            return container_type(self._prepare_batch(item) for item in batch)
         else:
             return batch  # ints, strs, etc.
 
@@ -362,7 +362,7 @@ class BaseTrainer(ABC):
         n_iter = n_samples // self.config.batch_size + 1
 
         recent_losses = collections.deque(
-            maxlen=self.config.log_interval // self.config.batch_size
+            maxlen=max(self.config.log_interval // self.config.batch_size, 1)
         )
         samples_seen_prev = 0
         t0 = time.time()
@@ -565,6 +565,11 @@ class DPOTrainer(BaseTrainer):
         with torch.no_grad():
             logits_accepted_ref, _ = self.reference_model(**accepted_inputs)
             logits_rejected_ref, _ = self.reference_model(**rejected_inputs)
+
+        train_util.check_finite("logits_accepted", logits_accepted)
+        train_util.check_finite("logits_rejected", logits_rejected)
+        train_util.check_finite("logits_accepted_ref", logits_accepted_ref)
+        train_util.check_finite("logits_rejected_ref", logits_rejected_ref)
 
         return dpo_util.dpo_loss(
             logits_accepted,
