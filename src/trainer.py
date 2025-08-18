@@ -236,18 +236,18 @@ class BaseTrainer(ABC):
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.micro_batch_size,
-            num_workers=model.config.num_workers,
-            prefetch_factor=model.config.prefetch_factor,
-            pin_memory=model.config.pin_memory,
+            num_workers=config.num_workers,
+            prefetch_factor=config.prefetch_factor,
+            pin_memory=config.pin_memory,
             shuffle=True,
             collate_fn=collator
         )
         self.validation_loader = DataLoader(
             validation_dataset,
             batch_size=self.micro_batch_size,
-            num_workers=model.config.num_workers,
-            prefetch_factor=model.config.prefetch_factor,
-            pin_memory=model.config.pin_memory,
+            num_workers=config.num_workers,
+            prefetch_factor=config.prefetch_factor,
+            pin_memory=config.pin_memory,
             shuffle=False,
             collate_fn=collator
         )
@@ -295,7 +295,19 @@ class BaseTrainer(ABC):
             container_type = type(batch)
             return container_type(self.prepare_batch(item) for item in batch)
         else:
-            return batch
+            return batch  # ints, strs, etc.
+
+    def _samples_in_batch(self, batch):
+        if isinstance(batch, torch.Tensor):
+            return batch.size(0)
+        elif isinstance(batch, dict):
+            return max(self._samples_in_batch(b) for b in batch.values())
+        elif isinstance(batch, (list, tuple)):
+            return max(self._samples_in_batch(b) for b in batch)
+        else:
+            raise ValueError(
+                f"Expcted batch to be a torch.Tensor, dict, list, or tuple, got {batch}"
+            )
 
     def _set_optimizer_lr(self):
         lr = _get_learning_rate_stepwise(
@@ -320,7 +332,7 @@ class BaseTrainer(ABC):
             batch = self._get_next_batch("train")
             batch = self._prepare_batch(batch)
 
-            self.samples_seen += batch["y"].size(0)
+            self.samples_seen += self._samples_in_batch(batch)
 
             with self.ctx:
                 loss = self._model_forward(batch)
@@ -517,7 +529,7 @@ class DPOTrainer(BaseTrainer):
         super().__init__(
             config, model, tokenizer, train_dataset, validation_dataset, device
         )
-        self.reference_model = reference_model
+        self.reference_model = reference_model.to(device)
 
         if config.compile:
             self.reference_model = torch.compile(self.reference_model)
