@@ -188,7 +188,9 @@ def _print_train_results(
     )
 
 
-def _print_validation_results(metrics, samples, samples_seen, took_hms):
+def _print_validation_results(metrics, samples, samples_seen, took_hms, mode):
+    assert mode in ["sft", "dpo"]
+
     h, m, s = took_hms
     print("\n" + "="*80)
     print("VALIDATION RESULTS")
@@ -196,11 +198,15 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms):
 
     print(f"📊 METRICS (samples seen: {samples_seen:,}, {h:02}:{m:02}:{s:02})")
     print("-" * 40)
-    print(f"  Loss:       {metrics['loss']:.4f}")
-    print(f"  Accuracy:   {metrics['accuracy']:.1%}")
-    print(f"  Perplexity: {metrics['perplexity']:.2f}")
-    print()
+    print(f"  Loss:        {metrics['loss']:.4f}")
+    print(f"  Accuracy:    {metrics['accuracy']:.1%}")
 
+    if mode == "sft":
+        print(f"  Perplexity:  {metrics['perplexity']:.2f}")
+    elif mode == "dpo":
+        print(f"  LogP Margin: {metrics['perplexity']:.2f}")
+
+    print()
     print("🤖 SAMPLE COMPLETIONS")
     print("-" * 40)
     for i, sample in enumerate(samples, 1):
@@ -209,7 +215,7 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms):
         print(f"Response: {sample['completion']}")
         if i < len(samples):
             print("-" * 30)
-    
+
     print("\n" + "="*80 + "\n")
 
 
@@ -396,7 +402,7 @@ class BaseTrainer(ABC):
                 metrics, samples = self._validate()
                 took_total = time.time() - t_start
                 took_hms = _to_hms(took_total)
-                _print_validation_results(
+                self._print_validation_results(
                     metrics, samples, self.samples_seen, took_hms
                 )
                 if self.config.checkpoint_filepath and metrics["loss"] < self.best_loss:
@@ -457,6 +463,10 @@ class BaseTrainer(ABC):
     def from_checkpoint(cls):
         # load checkpoint for continuing training
         pass
+    
+    @abstractmethod
+    def _print_validation_results(self):
+        pass
 
 
 class SFTTrainer(BaseTrainer):
@@ -481,6 +491,9 @@ class SFTTrainer(BaseTrainer):
     def _model_forward(self, batch):
         logits, loss = self.model(**batch)
         return {"logits": logits, "loss": loss, "y": batch["y"]}
+
+    def _print_validation_results(metrics, samples, samples_seen, took_hms):
+        _print_validation_results(metrics, samples, samples_seen, took_hms, mode="sft")
 
     @classmethod
     def from_checkpoint(
@@ -586,6 +599,9 @@ class DPOTrainer(BaseTrainer):
             "logprobs_accepted": logprobs_accepted,
             "logprobs_rejected": logprobs_rejected,
         }
+
+    def _print_validation_results(metrics, samples, samples_seen, took_hms):
+        _print_validation_results(metrics, samples, samples_seen, took_hms, mode="dpo")
 
     @classmethod
     def from_checkpoint(
