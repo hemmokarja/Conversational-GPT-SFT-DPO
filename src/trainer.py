@@ -492,6 +492,7 @@ class SFTTrainer(BaseTrainer):
         logits, loss = self.model(**batch)
         return {"logits": logits, "loss": loss, "y": batch["y"]}
 
+    @staticmethod
     def _print_validation_results(metrics, samples, samples_seen, took_hms):
         _print_validation_results(metrics, samples, samples_seen, took_hms, mode="sft")
 
@@ -600,6 +601,7 @@ class DPOTrainer(BaseTrainer):
             "logprobs_rejected": logprobs_rejected,
         }
 
+    @staticmethod
     def _print_validation_results(metrics, samples, samples_seen, took_hms):
         _print_validation_results(metrics, samples, samples_seen, took_hms, mode="dpo")
 
