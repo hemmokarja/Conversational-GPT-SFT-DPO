@@ -332,13 +332,13 @@ class BaseTrainer(ABC):
             batch = self._get_next_batch("train")
             batch = self._prepare_batch(batch)
 
-            self.samples_seen += self._samples_in_batch(batch)
-
             with self.ctx:
-                loss = self._model_forward(batch)
-                loss = loss / self.config.gradient_acc_steps
+                forward_output = self._model_forward(batch)
+                loss = forward_output["loss"] / self.config.gradient_acc_steps
                 loss.backward()
                 total_loss += loss.item()
+            
+            self.samples_seen += self._samples_in_batch(batch)
 
         if self.config.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.trainable_params, self.config.grad_clip)
@@ -414,7 +414,11 @@ class BaseTrainer(ABC):
         for _ in range(n_iter):
             batch = self._get_next_batch("validation")
             batch = self._prepare_batch(batch)
-            batch_metrics = self.validator.compute_batch_metrics(batch)
+
+            with self.ctx, torch.no_grad():
+                forward_output = self._model_forward(batch)
+
+            batch_metrics = self.validator.compute_batch_metrics(forward_output)
             all_batch_metrics.append(batch_metrics)
 
         metrics = self.validator.aggregate_metrics(all_batch_metrics)
@@ -475,8 +479,8 @@ class SFTTrainer(BaseTrainer):
         return _SFTCollator(model_config.padding_idx, model_config.ignored_idx)
 
     def _model_forward(self, batch):
-        _, loss = self.model(**batch)
-        return loss
+        logits, loss = self.model(**batch)
+        return {"logits": logits, "loss": loss, "y": batch["y"]}
 
     @classmethod
     def from_checkpoint(
@@ -536,7 +540,6 @@ class DPOTrainer(BaseTrainer):
 
         self.validator = DPOValidator(
             self.model,
-            self.reference_model,
             self.tokenizer, 
             self.config,
             self.ctx,
@@ -566,12 +569,7 @@ class DPOTrainer(BaseTrainer):
             logits_accepted_ref, _ = self.reference_model(**accepted_inputs)
             logits_rejected_ref, _ = self.reference_model(**rejected_inputs)
 
-        train_util.check_finite("logits_accepted", logits_accepted)
-        train_util.check_finite("logits_rejected", logits_rejected)
-        train_util.check_finite("logits_accepted_ref", logits_accepted_ref)
-        train_util.check_finite("logits_rejected_ref", logits_rejected_ref)
-
-        return dpo_util.dpo_loss(
+        loss, logprobs_accepted, logprobs_rejected = dpo_util.dpo_loss(
             logits_accepted,
             logits_rejected,
             logits_accepted_ref,
@@ -580,8 +578,14 @@ class DPOTrainer(BaseTrainer):
             y_rejected,
             cmask_accepted,
             cmask_rejected,
-            self.config.beta
+            self.config.beta,
+            return_logprobs=True
         )
+        return {
+            "loss": loss,
+            "logprobs_accepted": logprobs_accepted,
+            "logprobs_rejected": logprobs_rejected,
+        }
 
     @classmethod
     def from_checkpoint(
@@ -592,7 +596,7 @@ class DPOTrainer(BaseTrainer):
         device,
         override_config=None,
     ):
-        # continue training from checkpoint
+        """Continue a DPO run from checkpoint"""
         logger.info(
             f"Initializing DPOTrainer from checkpoint saved on "
             f"'{checkpoint['datetime']}'"
@@ -643,7 +647,7 @@ class DPOTrainer(BaseTrainer):
         validation_dataset,
         device,
     ):
-        # initialize a new DPO run from SFT checkpoint
+        """Iinitialize a new DPO run from SFT checkpoint"""
         logger.info(
             f"Initializing DPOTrainer from checkpoint saved on "
             f"'{checkpoint['datetime']}'"

@@ -38,6 +38,7 @@ def dpo_loss(
     cmask_accepted,
     cmask_rejected,
     beta=0.1,
+    return_logprobs=False
 ):
     logprobs_accepted = _compute_completion_logprobs(
         logits_accepted_policy, y_accepted, cmask_accepted
@@ -51,17 +52,11 @@ def dpo_loss(
     logprobs_rejected_ref = _compute_completion_logprobs(
         logits_rejected_reference, y_rejected, cmask_rejected
     )
-    train_util.check_finite("logprobs_accepted", logprobs_accepted)
-    train_util.check_finite("logprobs_rejected", logprobs_rejected)
-    train_util.check_finite("logprobs_accepted_ref", logprobs_accepted_ref)
-    train_util.check_finite("logprobs_rejected_ref", logprobs_rejected_ref)
 
     policy_logratios = logprobs_accepted - logprobs_rejected
     reference_logratios = logprobs_accepted_ref - logprobs_rejected_ref
     logits = beta * (policy_logratios - reference_logratios)
-    train_util.check_finite("logits", logits)
-
     loss = -F.logsigmoid(logits).mean()
-    train_util.check_finite("loss", loss)
-
-    return loss
+    if not return_logprobs:
+        return loss
+    return loss, logprobs_accepted, logprobs_rejected
