@@ -111,12 +111,12 @@ class DPOValidator(BaseValidator):
         super().__init__(model, tokenizer, trainer_config, ctx, device, prevent_tokens)
 
     def compute_batch_metrics(self, forward_output):
-        reward_margin = (
+        logprob_margin = (
             forward_output["logprobs_accepted"] - forward_output["logprobs_rejected"]
         )
-        accuracy = (reward_margin > 0).float().mean().item()
+        accuracy = (logprob_margin > 0).float().mean().item()
         return {
             "loss": forward_output["loss"].item(),
             "accuracy": accuracy,
-            "reward_margin": reward_margin.mean().item()
+            "logprob_margin": logprob_margin.mean().item()
         }

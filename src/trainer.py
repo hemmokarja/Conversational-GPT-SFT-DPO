@@ -204,7 +204,7 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms, mode):
     if mode == "sft":
         print(f"  Perplexity:  {metrics['perplexity']:.2f}")
     elif mode == "dpo":
-        print(f"  LogP Margin: {metrics['perplexity']:.2f}")
+        print(f"  LogP Margin: {metrics['logprob_margin']:.2f}")
 
     print()
     print("🤖 SAMPLE COMPLETIONS")
