@@ -1,7 +1,5 @@
 from torch.nn import functional as F
 
-from src import train_util
-
 
 def _compute_logprobs(logits, y):
     """

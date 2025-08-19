@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src import dpo_util, train_util
+from src import dpo_util
 from src.model import FineTuneableGPT2, GPTConfig, LoRAConfig
 from src.validation import SFTValidator, DPOValidator
 
