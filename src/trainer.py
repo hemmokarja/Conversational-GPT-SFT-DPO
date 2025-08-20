@@ -613,12 +613,17 @@ class DPOTrainer(BaseTrainer):
         if cp_dir and cp_dir != ".":
             os.makedirs(cp_dir, exist_ok=True)
 
+        if (cfg := getattr(self.model, "lora_config", None)):
+            lora_config = asdict(cfg)
+        else:
+            lora_config = None
+
         checkpoint = {
             "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "trainer_config": asdict(self.config),
-            "lora_config": asdict(self.model.lora_config),
+            "lora_config": lora_config,
             "model_config": asdict(self.model.config),
             "samples_seen": self.samples_seen,
             "validation_metrics": validation_metrics,
