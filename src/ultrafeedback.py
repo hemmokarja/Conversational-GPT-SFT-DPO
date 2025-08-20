@@ -34,11 +34,13 @@ def _load_samples(validation_size=0.05):
         train_validation_samples.append(samples)
     return train_validation_samples
 
+
 def _length_ok(example, tokenizer):
     return (
         len(example["accepted_tokens"]["input_ids"]) <= tokenizer.model_max_length
         and len(example["rejected_tokens"]["input_ids"]) <= tokenizer.model_max_length
     )
+
 
 def load_ultrafeedback_dataset(tokenizer, validation_size=0.05, num_proc=8):
     train_samples, validation_samples = _load_samples(validation_size)
