@@ -652,9 +652,13 @@ class DPOTrainer(BaseTrainer):
         reference_model.load_state_dict(sft_checkpoint["model_state_dict"])
 
         model_config = GPTConfig(**checkpoint["model_config"])
-        lora_config = LoRAConfig(**checkpoint["lora_config"])
         model = FineTuneableGPT2(model_config)
-        model.apply_lora(lora_config)
+
+        lora_config_dict = checkpoint["lora_config"]
+        if lora_config_dict is not None:
+            lora_config = LoRAConfig(**lora_config_dict)
+            model.apply_lora(lora_config)
+
         model.load_state_dict(checkpoint["model_state_dict"])
 
         if override_config is None:
@@ -699,7 +703,8 @@ class DPOTrainer(BaseTrainer):
 
         model = FineTuneableGPT2(model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
-        model.apply_lora(lora_config)
+        if lora_config is not None:
+            model.apply_lora(lora_config)
 
         assert (
             reference_model.transformer.wte.weight.data_ptr()
