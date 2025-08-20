@@ -1,6 +1,5 @@
 import collections
 import contextlib
-import copy
 import datetime
 import logging
 import os
@@ -432,24 +431,6 @@ class BaseTrainer(ABC):
         self.model.train()
         return metrics, samples
 
-    def _save_checkpoint(self, validation_metrics=None):
-        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
-        if cp_dir and cp_dir != ".":
-            os.makedirs(cp_dir, exist_ok=True)
-
-        checkpoint = {
-            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "trainer_config": asdict(self.config),
-            "model_config": asdict(self.model.config),
-            "samples_seen": self.samples_seen,
-            "validation_metrics": validation_metrics,
-            "tokenizer": self.tokenizer,
-        }
-        torch.save(checkpoint, self.config.checkpoint_filepath)
-        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
-
     @abstractmethod
     def _get_collator(self, model_config):
         pass
@@ -457,6 +438,10 @@ class BaseTrainer(ABC):
     @abstractmethod
     def _model_forward(self, batch):
         # propagate batch through model(s) and return loss
+        pass
+
+    @abstractmethod
+    def _save_checkpoint(self):
         pass
 
     @abstractmethod
@@ -495,6 +480,24 @@ class SFTTrainer(BaseTrainer):
     @staticmethod
     def _print_validation_results(metrics, samples, samples_seen, took_hms):
         _print_validation_results(metrics, samples, samples_seen, took_hms, mode="sft")
+
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
 
     @classmethod
     def from_checkpoint(
@@ -605,6 +608,25 @@ class DPOTrainer(BaseTrainer):
     def _print_validation_results(metrics, samples, samples_seen, took_hms):
         _print_validation_results(metrics, samples, samples_seen, took_hms, mode="dpo")
 
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "lora_config": asdict(self.model.lora_config),
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
+
     @classmethod
     def from_checkpoint(
         cls,
@@ -671,11 +693,18 @@ class DPOTrainer(BaseTrainer):
             f"'{checkpoint['datetime']}'"
         )
         model_config = GPTConfig(**checkpoint["model_config"])
+
         reference_model = FineTuneableGPT2(model_config)
         reference_model.load_state_dict(checkpoint["model_state_dict"])
 
-        model = copy.deepcopy(reference_model)
+        model = FineTuneableGPT2(model_config)
+        model.load_state_dict(checkpoint["model_state_dict"])
         model.apply_lora(lora_config)
+
+        assert (
+            reference_model.transformer.wte.weight.data_ptr()
+            != model.transformer.wte.weight.data_ptr()
+        )
 
         return cls(
             config,
