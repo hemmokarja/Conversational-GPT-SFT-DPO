@@ -34,6 +34,11 @@ def _load_samples(validation_size=0.05):
         train_validation_samples.append(samples)
     return train_validation_samples
 
+def _length_ok(example, tokenizer):
+    return (
+        len(example["accepted_tokens"]["input_ids"]) <= tokenizer.model_max_length
+        and len(example["rejected_tokens"]["input_ids"]) <= tokenizer.model_max_length
+    )
 
 def load_ultrafeedback_dataset(tokenizer, validation_size=0.05, num_proc=8):
     train_samples, validation_samples = _load_samples(validation_size)
@@ -48,8 +53,22 @@ def load_ultrafeedback_dataset(tokenizer, validation_size=0.05, num_proc=8):
     datasets_ = []
     for split_samples in [train_samples, validation_samples]:
         dataset = Dataset.from_list(split_samples)
-        preprocessor = DPOPreprocessor(tokenizer)
+
+        # preprocess sequences to one token too long here so that filter function
+        # filters out the overlength sequences
+        preprocessor = DPOPreprocessor(
+            tokenizer, max_length=tokenizer.model_max_length + 1
+        )
         datasets.logging.disable_progress_bar()
         preprocessed_dataset = dataset.map(preprocessor, num_proc=num_proc)
-        datasets_.append(preprocessed_dataset)
+
+        before = len(preprocessed_dataset)
+        filter_fn = lambda x: _length_ok(x, tokenizer)
+        filtered_dataset = preprocessed_dataset.filter(filter_fn, num_proc=num_proc)
+        after = len(filtered_dataset)
+        logger.info(
+            f"Filtered {before - after} overlength examples ({after}/{before} kept)"
+        )
+
+        datasets_.append(filtered_dataset)
     return datasets_
