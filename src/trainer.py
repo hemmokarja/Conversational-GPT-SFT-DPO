@@ -647,8 +647,13 @@ class DPOTrainer(BaseTrainer):
             f"'{checkpoint['datetime']}'"
         )
 
+        if override_config is None:
+            trainer_config = DPOTrainerConfig(**checkpoint["trainer_config"])
+        else:
+            trainer_config = override_config
+
         sft_checkpoint = torch.load(
-            checkpoint["sft_checkpoint_fileapth"],
+            trainer_config.sft_checkpoint_filepath,
             weights_only=False,
             map_location="cpu",
         )
@@ -665,11 +670,6 @@ class DPOTrainer(BaseTrainer):
             model.apply_lora(lora_config)
 
         model.load_state_dict(checkpoint["model_state_dict"])
-
-        if override_config is None:
-            trainer_config = DPOTrainerConfig(**checkpoint["trainer_config"])
-        else:
-            trainer_config = override_config
 
         trainer = cls(
             trainer_config,
