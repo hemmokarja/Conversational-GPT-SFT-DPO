@@ -7,14 +7,14 @@ import torch
 
 from src.conversation import Conversation
 from src.generator import AssistantResponseGenerator
-from src.model import FineTuneableGPT2, GPTConfig
+from src.model import FineTuneableGPT2, GPTConfig, LoRAConfig
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ChatConfig:
-    generate_max_tokens: int = 10_000
+    generate_max_tokens: int = 1024
     temperature: float = 1.0
     top_k: int = 50
 
@@ -87,8 +87,14 @@ class Chat:
             config = ChatConfig()
         if device is None:
             device = torch.device("cpu")
+
         model_config = GPTConfig(**checkpoint["model_config"])
         model = FineTuneableGPT2(model_config)
+        
+        if lora_config_dict := checkpoint.get("lora_config"):
+            lora_config = LoRAConfig(**checkpoint["lora_config"])
+            model.apply_lora(lora_config)
+
         model.load_state_dict(checkpoint["model_state_dict"])
         return cls(config, model, checkpoint["tokenizer"], device)
 

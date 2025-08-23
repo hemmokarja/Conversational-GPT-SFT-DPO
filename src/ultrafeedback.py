@@ -35,14 +35,16 @@ def _load_samples(validation_size=0.05):
     return train_validation_samples
 
 
-def _length_ok(example, tokenizer):
+def _length_ok(example, max_len):
     return (
-        len(example["accepted_tokens"]["input_ids"]) <= tokenizer.model_max_length
-        and len(example["rejected_tokens"]["input_ids"]) <= tokenizer.model_max_length
+        len(example["accepted_tokens"]["input_ids"]) < max_len
+        and len(example["rejected_tokens"]["input_ids"]) < max_len
     )
 
 
-def load_ultrafeedback_dataset(tokenizer, validation_size=0.05, num_proc=8):
+def load_ultrafeedback_dataset(
+    tokenizer, validation_size=0.05, max_len=None, num_proc=8
+):
     train_samples, validation_samples = _load_samples(validation_size)
     logger.info(
         f"Loaded {len(train_samples)} train and {len(validation_samples)} "
@@ -58,14 +60,13 @@ def load_ultrafeedback_dataset(tokenizer, validation_size=0.05, num_proc=8):
 
         # preprocess sequences to one token too long here so that filter function
         # filters out the overlength sequences
-        preprocessor = DPOPreprocessor(
-            tokenizer, max_length=tokenizer.model_max_length + 1
-        )
+        preprocessor = DPOPreprocessor(tokenizer)
         datasets.logging.disable_progress_bar()
         preprocessed_dataset = dataset.map(preprocessor, num_proc=num_proc)
 
         before = len(preprocessed_dataset)
-        filter_fn = lambda x: _length_ok(x, tokenizer)
+        max_len_ = max_len or tokenizer.model_max_length
+        filter_fn = lambda x: _length_ok(x, max_len_)
         filtered_dataset = preprocessed_dataset.filter(filter_fn, num_proc=num_proc)
         after = len(filtered_dataset)
         logger.info(
