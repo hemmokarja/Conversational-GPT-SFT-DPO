@@ -1,0 +1,36 @@
+=== SFT OVERHAUL === 
+
+* Enable lora config in checkpoints -> make SFT and DPO checkpoints identical -> 
+  _save_checkpoint to BaseTrainer
+
+* Train with SmolTalk 
+  - E.g, with SmolMagpieUltra (`datasets.load_dataset("HuggingFaceTB/smoltalk", "smol-magpie-ultra")`)
+    or part of it since it's 400k samples
+
+
+=== DPO OVERHAUL ===
+
+Why? Ensure reciprocal conversation skills while allowing detailed instruction following.
+
+* Restructure DPOPreprocessor
+  - take as input a pair of conversation objects (accepted/rejected)
+  - validate that conversations differ only by the last assistant message (implement _eq_ method to Message class)
+  - encode both conversations so that completion mask is only the last assistant message
+
+* Pool HH-RLHF and UltraFeedback datasets into a single DPO dataset to ensure a balanced mix of
+reciprocal conversation and detailed instruction following
+  - parse UltraFeedback into conversation format
+  - remove conversations with odd number of messages from HH-RLHF
+
+
+=== OTHER ====
+
+* Think where the print_validation_results() should go.
+  Now it's a trainer method although the metrics are coupled with validator.
+  Would better fit validation.py, and be ran from within trainer._validate(), but we
+  don't have took_hms in that function available - though is it actually needed?
+
+* In `from_checkpoint()`, we first apply LoRA -> then load state dict. Will the param
+  freezes persist?
+
+* Load optimizer state too
