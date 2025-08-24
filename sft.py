@@ -1,9 +1,10 @@
 import logging
 
+from src.data import oasst
 import torch
 from transformers import GPT2Tokenizer
 
-from src import oasst, text_util
+from src import text_util
 from src.model import GPT2
 from src.trainer import SFTTrainer, SFTTrainerConfig
 

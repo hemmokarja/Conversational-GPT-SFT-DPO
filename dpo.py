@@ -2,7 +2,7 @@ import logging
 
 import torch
 
-from src import ultrafeedback
+from src.data import ultrafeedback
 from src.model import LoRAConfig
 from src.trainer import DPOTrainer, DPOTrainerConfig
 
