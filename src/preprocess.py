@@ -2,8 +2,11 @@ import re
 from abc import ABC, abstractmethod
 
 import torch
+from transformers import logging
 
 from src.conversation import Conversation, Message
+
+logging.set_verbosity_error()
 
 _TURN_SEPARATOR = "!END"
 
@@ -47,10 +50,7 @@ class BaseConversationPreprocessor(ABC):
 
         # content
         content_tokens = self.tokenizer.encode(
-            message.content,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=self.max_length
+            message.content, add_special_tokens=False,
         )
         ids.extend(content_tokens)
 
@@ -211,10 +211,7 @@ class GenerationConversationPreprocessor(BaseConversationPreprocessor):
         # content (if any)
         if message.content:
             content_tokens = self.tokenizer.encode(
-                message.content,
-                add_special_tokens=False,
-                truncation=True,
-                max_length=self.max_length
+                message.content, add_special_tokens=False,
             )
             ids.extend(content_tokens)
 
@@ -261,7 +258,10 @@ class GenerationConversationPreprocessor(BaseConversationPreprocessor):
         return conversation
 
 
-class DPOPreprocessor:
+class DPOConversationPreprocessor:
+    """
+    TODO add conversation pair validation, similar to what is done in hhrlhf.py
+    """
     def __init__(self, tokenizer, max_length=None, turn_separator=_TURN_SEPARATOR):
         self.tokenizer = tokenizer
         self.max_length = (
@@ -270,69 +270,30 @@ class DPOPreprocessor:
         self.turn_separator = turn_separator
         self.end_tokens = self.tokenizer.encode(turn_separator)
 
-    def __call__(self, sample):
-        return self.encode_to_tokens(sample)
+
+    def __call__(self, conversation_pair):
+        conversation_pair = {
+            k: self._convert_conversation(v) for k, v in conversation_pair.items()
+        }
+        return self.encode_to_tokens(conversation_pair)
     
-    def encode_to_tokens(self, sample):
-        accepted_dict = self._encode_one(sample["prompt"], sample["accepted"])
-        rejected_dict = self._encode_one(sample["prompt"], sample["rejected"])
+    def encode_to_tokens(self, conversation_pair):
+        accepted_dict = self._encode_conversation(conversation_pair["accepted"])
+        rejected_dict = self._encode_conversation(conversation_pair["rejected"])
         return {
             "accepted_tokens": accepted_dict,
             "rejected_tokens": rejected_dict,
         }
 
-    def _encode_one(self, prompt, completion):
+    def _encode_conversation(self, conversation):
         input_ids = []
         completion_mask = []
-        
-        # user role
-        user_role = "user: "
-        user_role_tokens = self.tokenizer.encode(user_role, add_special_tokens=False)
-        input_ids.extend(user_role_tokens)
-        completion_mask.extend([0] * len(user_role_tokens))
-
-        # prompt
-        prompt_tokens = self.tokenizer.encode(
-            prompt,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=self.max_length
-        )
-        input_ids.extend(prompt_tokens)
-        completion_mask.extend([0] * len(prompt_tokens))
-
-        # user end token
-        end_tokens = self.tokenizer.encode(
-            self.turn_separator, add_special_tokens=False
-        )
-        input_ids.extend(end_tokens)
-        completion_mask.extend([0] * len(end_tokens))
-
-        # \n
-        input_ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
-        completion_mask.append(0)
-
-        # assistant role
-        assistant_role = "assistant: "
-        assistant_role_tokens = self.tokenizer.encode(
-            assistant_role, add_special_tokens=False
-        )
-        input_ids.extend(assistant_role_tokens)
-        completion_mask.extend([0] * len(assistant_role_tokens))
-
-        # completion
-        completion_tokens = self.tokenizer.encode(
-            completion,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=self.max_length
-        )
-        input_ids.extend(completion_tokens)
-        completion_mask.extend([1] * len(completion_tokens))
-
-        # completion end token
-        input_ids.extend(end_tokens)
-        completion_mask.extend([1] * len(end_tokens))
+        n_messages = len(conversation.messages)
+        for i, message in enumerate(conversation.messages, 1):
+            mask_idx = 1 if i == n_messages else 0
+            msg_ids, msg_mask = self._encode_message(message, mask_idx)
+            input_ids.extend(msg_ids)
+            completion_mask.extend(msg_mask)
 
         labels = input_ids[1:][:self.max_length]
         input_ids = input_ids[:-1][:self.max_length]
@@ -343,3 +304,41 @@ class DPOPreprocessor:
             "labels": labels,
             "completion_mask": completion_mask,
         }
+
+    def _encode_message(self, message, mask_idx):
+        input_ids = []
+        completion_mask = []
+
+        # role + space
+        role_ = message.role + ": "
+        role_tokens = self.tokenizer.encode(role_, add_special_tokens=False)
+        input_ids.extend(role_tokens)
+        completion_mask.extend([0] * len(role_tokens))
+
+        # content
+        content_tokens = self.tokenizer.encode(
+            message.content, add_special_tokens=False,
+        )
+        input_ids.extend(content_tokens)
+        completion_mask.extend([mask_idx] * len(content_tokens))
+
+        # end
+        end_tokens = self.tokenizer.encode(self.turn_separator, add_special_tokens=False)
+        input_ids.extend(end_tokens)
+        completion_mask.extend([mask_idx] * len(end_tokens))
+
+        # \n
+        input_ids.append(self.tokenizer.encode("\n", add_special_tokens=False)[0])
+        completion_mask.append(0)
+
+        return input_ids, completion_mask
+
+    def _convert_conversation(self, conversation):
+        if not isinstance(conversation, Conversation):
+            # handle both dict and LazyRow objects
+            if hasattr(conversation, "keys") or hasattr(conversation, "__getitem__"):
+                conv_dict = dict(conversation)
+                conversation = Conversation.from_dict(conv_dict)
+            else:
+                raise ValueError(f"Cannot convert {type(conversation)} to Conversation")
+        return conversation

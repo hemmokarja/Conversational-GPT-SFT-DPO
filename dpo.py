@@ -2,7 +2,7 @@ import logging
 
 import torch
 
-from src.data import ultrafeedback
+from src.data import dataset
 from src.model import LoRAConfig
 from src.trainer import DPOTrainer, DPOTrainerConfig
 
@@ -10,10 +10,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
-N_SAMPLES_TRAIN = 50_100
-SAMPLE_MAX_LEN = 512  # num of tokens per example, overlength filtered
+N_SAMPLES_TRAIN = 124_000
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DATASET_PATH_NAMES = [
+    "Anthropic/hh-rlhf"
+    "openbmb/UltraFeedback"
+]
+SAMPLING_FACTORS = [0.7, 0.7]
+MAX_LEN = 512
 
 DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     batch_size=128,
@@ -50,6 +54,8 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
 # )
 LORA_CONFIG = None
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def initialize_trainer_from_sft_checkpoint():
     logger.info("Starting a new DPO run from a SFT checkpoint")
@@ -59,8 +65,8 @@ def initialize_trainer_from_sft_checkpoint():
         weights_only=False,
         map_location="cpu"
     )
-    train_dataset, validation_dataset = ultrafeedback.load_ultrafeedback_dataset(
-        checkpoint["tokenizer"], max_len=SAMPLE_MAX_LEN
+    train_dataset, validation_dataset = dataset.make_dpo_datasets(
+        DATASET_PATH_NAMES, SAMPLING_FACTORS, checkpoint["tokenizer"], MAX_LEN
     )
     trainer = DPOTrainer.init_from_sft_checkpoint(
         checkpoint,
@@ -77,8 +83,8 @@ def initialize_trainer_from_dpo_checkpoint():
     logger.info("Continuing DPO run from a checkpoint")
 
     checkpoint = torch.load(CHECKPOINT_PATH, weights_only=False, map_location="cpu")
-    train_dataset, validation_dataset = ultrafeedback.load_ultrafeedback_dataset(
-        checkpoint["tokenizer"], max_len=SAMPLE_MAX_LEN
+    train_dataset, validation_dataset = dataset.make_dpo_datasets(
+        DATASET_PATH_NAMES, SAMPLING_FACTORS, checkpoint["tokenizer"], MAX_LEN
     )
     trainer = DPOTrainer.from_checkpoint(
         checkpoint,

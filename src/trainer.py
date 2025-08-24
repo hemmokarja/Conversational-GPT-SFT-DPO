@@ -689,6 +689,12 @@ class DPOTrainer(BaseTrainer):
         reference_model = FineTuneableGPT2(model_config)
         reference_model.load_state_dict(checkpoint["model_state_dict"])
 
+        if checkpoint["lora_config"] is not None:
+            raise NotImplementedError(
+                "Initializing a DPOTrainer from a SFT checkpoint where LoRA is used is "
+                "unsupported as of now"
+            )
+
         model = FineTuneableGPT2(model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
         if lora_config is not None:

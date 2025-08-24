@@ -60,7 +60,7 @@ def initialize_trainer_from_scratch():
     text_util.add_pad_token_to_tokenizer(tokenizer)
 
     train_dataset, validation_dataset = dataset.make_sft_datasets(
-        DATASET_PATH_NAMES, tokenizer, SAMPLING_FACTORS
+        DATASET_PATH_NAMES, SAMPLING_FACTORS, tokenizer
     )
 
     model = GPT2.from_pretrained(BASE_MODEL, override_args={"dropout": 0.1})
@@ -83,7 +83,7 @@ def initalize_trainer_from_checkpoint():
 
     checkpoint = torch.load(CHECKPOINT_PATH, weights_only=False, map_location="cpu")
     train_dataset, validation_dataset = dataset.make_sft_datasets(
-        DATASET_PATH_NAMES, checkpoint["tokenizer"], SAMPLING_FACTORS
+        DATASET_PATH_NAMES, SAMPLING_FACTORS, checkpoint["tokenizer"]
     )
     trainer = SFTTrainer.from_checkpoint(
         checkpoint,
