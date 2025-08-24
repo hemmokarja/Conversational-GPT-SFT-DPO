@@ -87,6 +87,7 @@ def make_sft_datasets(
         f"{len(validation_conversations)} validation conversations"
     )
     datasets_ = []
+    logger.info("Preprocessing conversations, this might take a while...")
     for conversations in [train_conversations, validation_conversations]:
         dataset = Dataset.from_list(conversations)
         preprocessor = SFTConversationPreprocessor(tokenizer, ignored_idx)
