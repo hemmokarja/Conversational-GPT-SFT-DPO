@@ -81,7 +81,7 @@ class SFTValidator(BaseValidator):
         super().__init__(model, tokenizer, trainer_config, ctx, device, prevent_tokens)
 
     def compute_batch_metrics(self, forward_output):
-        preds = loss["logits"].argmax(dim=-1)  # [B, S]
+        preds = forward_output["logits"].argmax(dim=-1)  # [B, S]
         preds_flat = preds.view(-1)
 
         y_flat = forward_output["y"].view(-1)
