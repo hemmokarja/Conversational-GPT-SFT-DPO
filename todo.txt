@@ -34,3 +34,6 @@ reciprocal conversation and detailed instruction following
   freezes persist?
 
 * Load optimizer state too
+
+* Test DPO loss with 
+    - nonsensical rejections (e.g. shuffle them around)
