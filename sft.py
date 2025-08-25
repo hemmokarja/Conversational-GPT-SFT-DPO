@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = None  # if None, start from scratch
-N_SAMPLES_TRAIN = 280_200
+N_SAMPLES_TRAIN = 280_000
 
 DATASET_PATH_NAMES = [
     ("HuggingFaceTB/smoltalk", "smol-magpie-ultra"),

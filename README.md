@@ -95,86 +95,57 @@ learning.
 
 On its own, a pre-trained GPT trained for document completion cannot hold a back-and-forth conversation or provide direct answers to questions.
 
-### After SFT
+### After SFT and DPO
 
 ```
 ========== user ==========
 What does a Data Scientist do?
 
 ========== assistant ==========
-A Data Scientist is a professional who specializes in managing data in the research
-industry. They handle data using sophisticated tools and techniques to analyze and
-interpret complex data sets, and make decisions about its quality and applicability to
-their customer's needs. While a Data Scientist is a critical part of your organization's
-data science efforts and might provide significant benefits, it's likely the most
-challenging role in the industry, since they often work alone or within a team, and
-must master technical skills designed for software programmers.
+A data scientist plays a crucial role in driving the business and organization in which
+you work to achieve more and better outcomes for your users. A data scientist is a data
+analyst who uses statistical, machine learning, and analytics abilities to extract
+insights from data, identify patterns, and make informed decisions.
 
-Learning from seasoned data scientists may help you stay ahead of the curve, and develop
-your skills on the cutting edge of computing, analytics, and machine learning, as well
-as on innovative new technologies in business.
+They analyze reports, dashboards, and data sources on various stakeholders, including
+customers, partners, and competitors, to gain a deeper understanding of their behaviors,
+interests, and pain points. This analysis helps them develop targeted and effective
+solutions, which can benefit the business or organization in several ways.
+
+Data scientists also contribute in various technical aspects, such as schema design,
+data visualization, data optimization, and data modeling. By working collaboratively
+with different teams and departments, they can provide valuable insights and tools for
+decision-making and growth.
+
+When working with complex data-driven challenges, a data scientist can focus on the
+technical aspects and develop effective strategies to understand the data, extract
+insights, and communicate with stakeholders effectively.
 
 ========== user ==========
 What about a Machine Learning Engineer?
 
 ========== assistant ==========
-A Machine Learning Engineer is responsible for developing advanced analytical,
-learning, and machine learning models.
+A machine learning engineer is someone who is responsible for developing and
+maintaining data-driven algorithms, and responsible for understanding and optimizing
+the system-wide requirements of machine learning.
 
-A Machine Learning Engineer strives to create the most appropriate machine learning
-models to achieve the highest levels of accuracy and predictive power.
+As the generalist in machine learning, their primary responsibility is to ensure that
+machine learning algorithms are reliable, scalable, and well-behaved, ensuring that
+the system remains sensitive to individual preferences while performing well across
+different domains.
 
-The job is to create algorithms that are able to efficiently extract, process, and
-store knowledge from large datasets, leveraging and extending other factors such as
-machine learning frameworks, data support systems, human-like models, and AI software.
+Another important aspect of a machine learning engineer's role is to ensure that the
+algorithm works as expected in real-world applications, without any biases or edge
+cases. This involves conducting thorough and unbiased evaluations, and ensuring that
+the performance of the machine learning model in terms of accuracy, precision, and
+reliability is kept up to the NDA criteria.
 
-The most important feature of the job is to make use of the latest advances in machine
-learning techniques and algorithms, and to create systems that are capable of solving
-a variety of tasks in deep neural networks, sentiment generation, object recognition,
-and other complex applications across different domains.
-```
-
-With SFT, the model’s output goes from random text continuation to straightforward, instruction-following replies. There's certainly room for improvement though.
-
-### After DPO
-
-```
-========== user ==========
-What does a Data Scientist do?
-
-========== assistant ==========
-A data scientist is a person who has technical expertise or professional experience in
-the field of data, such as data science, statistical analysis or database management.
-Data science is a broad term that encompasses a wide range of skills and techniques that
-can be applied to the analysis or design of data, from data mining to machine learning.
-
-Data scientists include people who understand the foundations of data science, as well
-as the scientific method and data analysis. They specialize in identifying patterns or
-trends in large volumes of data, extracting values and identifying data sources. They
-also work on various aspects of the process, including the design, optimization, and
-integration of these principles.
-
-In addition to analytical skills, data scientists also can learn how to apply these
-techniques to their own projects to improve efficiency and the effectiveness of data
-analysis and statistical analysis. They can also use those insights and tools to create
-innovative products and solutions.
-
-Data scientists often work for data analytics companies, such as those offering machine
-translation, machine learning, or analytic data sets, and in some cases, work independently.
-They can also contribute to projects like data science standards, machine learning
-libraries, or related tools like data engineering, data visualization, and data mining.
-
-Generally, these data scientists have strong analytical and technological expertise in
-various areas, but often have little formal mathematical background. They also might
-have some business-related backgrounds, such as being a consultant, business leader, or
-scientist in other fields, but will often specialize in machine learning or statistical
-analysis, with the specific emphasis on the areas where they have technical expertise.
-
-Although relatively new in the area of data science, it's growing in importance because
-of the opportunities it provides for improving the productivity of businesses and the
-world at large. The data scientist, on the job, should demonstrate a broad understanding
-of the scientific method and the importance of data science in improving productivity
-and innovation.
+While a machine learning engineer typically holds a bachelor's degree in mathematics
+or computer science, they can also specialize in areas such as machine learning,
+computer vision, or machine learning theory. In general, the key roles of a machine
+learning engineer are to develop and refine algorithms, support the development and
+implementation of machine learning models, and implement and maintain the
+infrastructure associated with the system.
 ```
 
 Perfect? Well, that's a stretch. Improvement over the baseline? You be the judge :)

@@ -3,14 +3,13 @@ import logging
 import torch
 
 from src.data import dataset
-from src.model import LoRAConfig
 from src.trainer import DPOTrainer, DPOTrainerConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
-N_SAMPLES_TRAIN = 100_200
+N_SAMPLES_TRAIN = 100_000
 
 DATASET_PATH_NAMES = [
     "Anthropic/hh-rlhf",
@@ -48,10 +47,6 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     sft_checkpoint_filepath="checkpoints/sft/medium.pt",
     beta=0.01,
 )
-# LORA_CONFIG = LoRAConfig(
-#     r=32,
-#     alpha=32
-# )
 LORA_CONFIG = None
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
