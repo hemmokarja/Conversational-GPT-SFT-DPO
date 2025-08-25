@@ -13,10 +13,10 @@ CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
 N_SAMPLES_TRAIN = 124_000
 
 DATASET_PATH_NAMES = [
-    "Anthropic/hh-rlhf"
-    "openbmb/UltraFeedback"
+    "Anthropic/hh-rlhf",
+    "openbmb/UltraFeedback",
 ]
-SAMPLING_FACTORS = [0.7, 0.7]
+SAMPLING_FACTORS = [0.5, 0.5]
 MAX_LEN = 512
 
 DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
@@ -44,8 +44,8 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     generate_max_tokens=1024,
     generate_temperature=1.0,
     generate_top_k=50,
-    checkpoint_filepath="checkpoints/dpo/checkpoint-medium-512.pt",
-    sft_checkpoint_filepath="checkpoints/checkpoint-medium-pooled.pt",
+    checkpoint_filepath="checkpoints/dpo/medium.pt",
+    sft_checkpoint_filepath="checkpoints/sft/medium.pt",
     beta=0.01,
 )
 # LORA_CONFIG = LoRAConfig(
