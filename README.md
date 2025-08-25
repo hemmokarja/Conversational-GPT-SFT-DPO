@@ -63,7 +63,7 @@ Together, **SFT provides the baseline alignment**, while **DPO sharpens the mode
 
 The following example demonstrates the impact of **Supervised Fine-Tuning (SFT)** and **Direct Preference Optimization (DPO)** on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and approximately eight hours of training on a `g5.4xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements both methods provide in conversational alignment.
 
-### Before SFT
+### Before SFT and DPO
 
 ```
 ========== user ==========
