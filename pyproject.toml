@@ -5,11 +5,19 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.40.11",
     "datasets>=4.0.0",
     "ipykernel>=6.30.0",
+    "matplotlib>=3.10.5",
     "numpy>=2.3.2",
     "setuptools>=80.9.0",
     "torch>=2.7.1",
     "tqdm>=4.67.1",
     "transformers>=4.54.1",
 ]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

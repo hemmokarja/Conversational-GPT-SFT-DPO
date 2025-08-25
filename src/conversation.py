@@ -9,6 +9,14 @@ class Message:
     def __repr__(self):
         return f"Message(role={self.role!r}, content={self.content!r})"
 
+    def __eq__(self, other):
+        if not isinstance(other, Message):
+            return NotImplemented
+        return self.role == other.role and self.content == other.content
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
     def to_dict(self):
         return {"role": self.role, "content": self.content}
 
@@ -43,7 +51,13 @@ class Conversation:
 
     def __repr__(self):
         return f"Conversation(messages={self.messages!r})"
-    
+
+    def __getitem__(self, index):
+        return self.messages[index]
+
+    def __len__(self):
+        return len(self.messages)
+
     def to_dict(self):
         return {"messages": [msg.to_dict() for msg in self.messages]}
 

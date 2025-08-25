@@ -1,9 +1,10 @@
-import contextlib
 import collections
+import contextlib
 import datetime
 import logging
 import os
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Tuple, Optional, List
 
@@ -11,14 +12,15 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.model import FineTuneableGPT2, GPTConfig
-from src.validation import SFTValidator
+from src import dpo_util
+from src.model import FineTuneableGPT2, GPTConfig, LoRAConfig
+from src.validation import SFTValidator, DPOValidator
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TrainerConfig:
+class SFTTrainerConfig:
     batch_size: int  # split into micro steps
     gradient_acc_steps: int = 10
     log_interval: int = 100
@@ -44,6 +46,16 @@ class TrainerConfig:
     def __post_init__(self):
         if self.batch_size % self.gradient_acc_steps != 0:
             raise ValueError("batch_size must be divisible by gradient_acc_steps")
+
+
+@dataclass
+class DPOTrainerConfig(SFTTrainerConfig):
+    sft_checkpoint_filepath: str = None
+    beta: float = 0.1
+
+    def __post_init__(self):
+        if self.sft_checkpoint_filepath is None:
+            raise ValueError("Must specify sft_checkpoint_filepath")
 
 
 class _SFTCollator:
@@ -78,6 +90,43 @@ class _SFTCollator:
             "y": torch.tensor(labels),
             "valid_mask": torch.tensor(valid_masks)
         }
+
+
+class _DPOCollator:
+    def __init__(self, padding_idx):
+        if padding_idx is None:
+            raise ValueError("padding_idx must not be None")
+        self.padding_idx = padding_idx
+
+    def __call__(self, batch):
+        max_len = max(
+            max(len(item["accepted_tokens"]["input_ids"]) for item in batch),
+            max(len(item["rejected_tokens"]["input_ids"]) for item in batch)
+        )
+
+        result = {"accepted": {}, "rejected": {}}
+
+        for split in ["accepted", "rejected"]:
+            split_data = {"x": [], "y": [], "completion_mask": [], "valid_mask": []}
+            for item in batch:
+                tokens = item[f"{split}_tokens"]
+
+                input_ids = tokens["input_ids"]
+                labels = tokens["labels"]
+                completion_mask = tokens["completion_mask"]
+
+                pad_len = max_len - len(input_ids)
+
+                split_data["x"].append(input_ids + [self.padding_idx] * pad_len)
+                split_data["y"].append(labels + [self.padding_idx] * pad_len)
+                split_data["completion_mask"].append(completion_mask + [0] * pad_len)
+                split_data["valid_mask"].append([1] * len(input_ids) + [0] * pad_len)
+
+            result[split] = {
+                k: torch.tensor(v, dtype=torch.long) for k, v in split_data.items()
+            }
+
+        return result
 
 
 def _get_learning_rate_stepwise(
@@ -116,21 +165,6 @@ def _configure_optimizer(model, weight_decay, learning_rate, betas):
     return optimizer, params
 
 
-def _make_loader(
-    dataset, padding_idx, ignored_idx, config, micro_batch_size, shuffle=False
-):
-    collator = _SFTCollator(padding_idx, ignored_idx)
-    return DataLoader(
-        dataset,
-        batch_size=micro_batch_size,
-        num_workers=config.num_workers,
-        prefetch_factor=config.prefetch_factor,
-        pin_memory=config.pin_memory,
-        shuffle=shuffle,
-        collate_fn=collator
-    )
-
-
 def _to_hms(took):
     took = int(took)
     hours = took // 3600
@@ -153,7 +187,9 @@ def _print_train_results(
     )
 
 
-def _print_validation_results(metrics, samples, samples_seen, took_hms):
+def _print_validation_results(metrics, samples, samples_seen, took_hms, mode):
+    assert mode in ["sft", "dpo"]
+
     h, m, s = took_hms
     print("\n" + "="*80)
     print("VALIDATION RESULTS")
@@ -161,11 +197,15 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms):
 
     print(f"📊 METRICS (samples seen: {samples_seen:,}, {h:02}:{m:02}:{s:02})")
     print("-" * 40)
-    print(f"  Loss:       {metrics['loss']:.4f}")
-    print(f"  Accuracy:   {metrics['accuracy']:.1%}")
-    print(f"  Perplexity: {metrics['perplexity']:.2f}")
-    print()
+    print(f"  Loss:        {metrics['loss']:.4f}")
+    print(f"  Accuracy:    {metrics['accuracy']:.1%}")
 
+    if mode == "sft":
+        print(f"  Perplexity:  {metrics['perplexity']:.2f}")
+    elif mode == "dpo":
+        print(f"  LogP Margin: {metrics['logprob_margin']:.2f}")
+
+    print()
     print("🤖 SAMPLE COMPLETIONS")
     print("-" * 40)
     for i, sample in enumerate(samples, 1):
@@ -174,11 +214,11 @@ def _print_validation_results(metrics, samples, samples_seen, took_hms):
         print(f"Response: {sample['completion']}")
         if i < len(samples):
             print("-" * 30)
-    
+
     print("\n" + "="*80 + "\n")
 
 
-class Trainer:
+class BaseTrainer(ABC):
     def __init__(
         self, config, model, tokenizer, train_dataset, validation_dataset, device
     ):
@@ -197,21 +237,24 @@ class Trainer:
         self.optimizer = optimizer
         self.trainable_params = trainable_params
 
-        self.train_loader = _make_loader(
+        collator = self._get_collator(model.config)
+        self.train_loader = DataLoader(
             train_dataset,
-            model.config.padding_idx,
-            model.config.ignored_idx,
-            config,
-            self.micro_batch_size,
-            shuffle=True
+            batch_size=self.micro_batch_size,
+            num_workers=config.num_workers,
+            prefetch_factor=config.prefetch_factor,
+            pin_memory=config.pin_memory,
+            shuffle=True,
+            collate_fn=collator
         )
-        self.validation_loader = _make_loader(
+        self.validation_loader = DataLoader(
             validation_dataset,
-            model.config.padding_idx,
-            model.config.ignored_idx,
-            config,
-            self.micro_batch_size,
-            shuffle=False
+            batch_size=self.micro_batch_size,
+            num_workers=config.num_workers,
+            prefetch_factor=config.prefetch_factor,
+            pin_memory=config.pin_memory,
+            shuffle=False,
+            collate_fn=collator
         )
         self.train_iterator = iter(self.train_loader)
 
@@ -222,15 +265,6 @@ class Trainer:
             contextlib.nullcontext()
             if device.type == "cpu"
             else torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-        )
-
-        self.validator = SFTValidator(
-            self.model,
-            self.tokenizer, 
-            self.config,
-            self.ctx,
-            device,
-            prevent_tokens=[tokenizer.pad_token_id],
         )
 
     def _get_next_batch(self, mode="train"):
@@ -254,7 +288,31 @@ class Trainer:
                 return next(self.validation_iterator)
 
     def _prepare_batch(self, batch):
-        return {k: t.to(self.device, non_blocking=True) for k, t in batch.items()}
+        """
+        Recursively move tensors to devide. Handles lists, tuples, dicts and
+        nested dicts.
+        """
+        if isinstance(batch, torch.Tensor):
+            return batch.to(self.device, non_blocking=True)
+        elif isinstance(batch, dict):
+            return {key: self._prepare_batch(value) for key, value in batch.items()}
+        elif isinstance(batch, (list, tuple)):
+            container_type = type(batch)
+            return container_type(self._prepare_batch(item) for item in batch)
+        else:
+            return batch  # ints, strs, etc.
+
+    def _samples_in_batch(self, batch):
+        if isinstance(batch, torch.Tensor):
+            return batch.size(0)
+        elif isinstance(batch, dict):
+            return max(self._samples_in_batch(b) for b in batch.values())
+        elif isinstance(batch, (list, tuple)):
+            return max(self._samples_in_batch(b) for b in batch)
+        else:
+            raise ValueError(
+                f"Expcted batch to be a torch.Tensor, dict, list, or tuple, got {batch}"
+            )
 
     def _set_optimizer_lr(self):
         lr = _get_learning_rate_stepwise(
@@ -279,13 +337,13 @@ class Trainer:
             batch = self._get_next_batch("train")
             batch = self._prepare_batch(batch)
 
-            self.samples_seen += batch["y"].size(0)
-
             with self.ctx:
-                _, loss = self.model(**batch)
-                loss = loss / self.config.gradient_acc_steps
+                forward_output = self._model_forward(batch)
+                loss = forward_output["loss"] / self.config.gradient_acc_steps
                 loss.backward()
                 total_loss += loss.item()
+            
+            self.samples_seen += self._samples_in_batch(batch)
 
         if self.config.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(self.trainable_params, self.config.grad_clip)
@@ -301,24 +359,6 @@ class Trainer:
         prev_iter = max(prev_iter, 0)
         return this_iter > prev_iter
 
-    def _save_checkpoint(self, validation_metrics=None):
-        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
-        if cp_dir and cp_dir != ".":
-            os.makedirs(cp_dir, exist_ok=True)
-
-        checkpoint = {
-            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "trainer_config": asdict(self.config),
-            "model_config": asdict(self.model.config),
-            "samples_seen": self.samples_seen,
-            "validation_metrics": validation_metrics,
-            "tokenizer": self.tokenizer,
-        }
-        torch.save(checkpoint, self.config.checkpoint_filepath)
-        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
-
     def train(self, n_samples):
         logger.info(f"Staring model training for {n_samples} samples...")
 
@@ -327,7 +367,7 @@ class Trainer:
         n_iter = n_samples // self.config.batch_size + 1
 
         recent_losses = collections.deque(
-            maxlen=self.config.log_interval // self.config.batch_size
+            maxlen=max(self.config.log_interval // self.config.batch_size, 1)
         )
         samples_seen_prev = 0
         t0 = time.time()
@@ -358,10 +398,10 @@ class Trainer:
                 )
 
             if self._crossed_interval(self.config.validation_interval):
-                metrics, samples = self.validate()
+                metrics, samples = self._validate()
                 took_total = time.time() - t_start
                 took_hms = _to_hms(took_total)
-                _print_validation_results(
+                self._print_validation_results(
                     metrics, samples, self.samples_seen, took_hms
                 )
                 if self.config.checkpoint_filepath and metrics["loss"] < self.best_loss:
@@ -371,7 +411,7 @@ class Trainer:
 
         logger.info("Finished model training.")
 
-    def validate(self):
+    def _validate(self):
         self.model.eval()
         self.validation_iterator = iter(self.validation_loader)
         all_batch_metrics = []
@@ -379,13 +419,87 @@ class Trainer:
         for _ in range(n_iter):
             batch = self._get_next_batch("validation")
             batch = self._prepare_batch(batch)
-            batch_metrics = self.validator.compute_batch_metrics(batch)
+
+            with self.ctx, torch.no_grad():
+                forward_output = self._model_forward(batch)
+
+            batch_metrics = self.validator.compute_batch_metrics(forward_output)
             all_batch_metrics.append(batch_metrics)
 
         metrics = self.validator.aggregate_metrics(all_batch_metrics)
         samples = self.validator.generate_samples()
         self.model.train()
         return metrics, samples
+
+    def _save_checkpoint(self, validation_metrics=None):
+        cp_dir = os.path.dirname(self.config.checkpoint_filepath)
+        if cp_dir and cp_dir != ".":
+            os.makedirs(cp_dir, exist_ok=True)
+
+        if (cfg := getattr(self.model, "lora_config", None)):
+            lora_config = asdict(cfg)
+        else:
+            lora_config = None
+
+        checkpoint = {
+            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "trainer_config": asdict(self.config),
+            "lora_config": lora_config,
+            "model_config": asdict(self.model.config),
+            "samples_seen": self.samples_seen,
+            "validation_metrics": validation_metrics,
+            "tokenizer": self.tokenizer,
+        }
+        torch.save(checkpoint, self.config.checkpoint_filepath)
+        logger.info(f"Checkpoint saved to '{self.config.checkpoint_filepath}'")
+
+    @abstractmethod
+    def _get_collator(self, model_config):
+        pass
+
+    @abstractmethod
+    def _model_forward(self, batch):
+        # propagate batch through model(s) and return loss
+        pass
+
+    @abstractmethod
+    def from_checkpoint(cls):
+        # load checkpoint for continuing training
+        pass
+    
+    @abstractmethod
+    def _print_validation_results(self):
+        pass
+
+
+class SFTTrainer(BaseTrainer):
+    def __init__(
+        self, config, model, tokenizer, train_dataset, validation_dataset, device
+    ):
+        super().__init__(
+            config, model, tokenizer, train_dataset, validation_dataset, device
+        )
+        self.validator = SFTValidator(
+            self.model,
+            self.tokenizer, 
+            self.config,
+            self.ctx,
+            device,
+            prevent_tokens=[tokenizer.pad_token_id],
+        )
+
+    def _get_collator(self, model_config):
+        return _SFTCollator(model_config.padding_idx, model_config.ignored_idx)
+
+    def _model_forward(self, batch):
+        logits, loss = self.model(**batch)
+        return {"logits": logits, "loss": loss, "y": batch["y"]}
+
+    @staticmethod
+    def _print_validation_results(metrics, samples, samples_seen, took_hms):
+        _print_validation_results(metrics, samples, samples_seen, took_hms, mode="sft")
 
     @classmethod
     def from_checkpoint(
@@ -394,16 +508,27 @@ class Trainer:
         train_dataset,
         validation_dataset,
         device,
-        model_cls=FineTuneableGPT2,
+        override_config=None,
     ):
         logger.info(
-            f"Initializing Trainer from checkpoint saved on '{checkpoint['datetime']}'"
+            f"Initializing SFTTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
         )
+
+        if override_config is None:
+            trainer_config = SFTTrainerConfig(**checkpoint["trainer_config"])
+        else:
+            trainer_config = override_config
+
         model_config = GPTConfig(**checkpoint["model_config"])
-        model = model_cls(model_config)
+        model = FineTuneableGPT2(model_config)
+
+        if lora_config_dict := checkpoint["lora_config"]:
+            lora_config = LoRAConfig(**lora_config_dict)
+            model.apply_lora(lora_config)
+
         model.load_state_dict(checkpoint["model_state_dict"])
 
-        trainer_config = TrainerConfig(**checkpoint["trainer_config"])
         trainer = cls(
             trainer_config,
             model,
@@ -417,3 +542,174 @@ class Trainer:
             trainer.best_loss = checkpoint["validation_metrics"]["loss"]
 
         return trainer
+
+
+class DPOTrainer(BaseTrainer):
+    def __init__(
+        self,
+        config,
+        model,
+        reference_model,
+        tokenizer,
+        train_dataset,
+        validation_dataset,
+        device,
+    ):
+        super().__init__(
+            config, model, tokenizer, train_dataset, validation_dataset, device
+        )
+        self.reference_model = reference_model.to(device)
+
+        if config.compile:
+            self.reference_model = torch.compile(self.reference_model)
+
+        self.validator = DPOValidator(
+            self.model,
+            self.tokenizer, 
+            self.config,
+            self.ctx,
+            device,
+            prevent_tokens=[tokenizer.pad_token_id],
+        )
+
+    def _get_collator(self, model_config):
+        return _DPOCollator(model_config.padding_idx)
+
+    def _model_forward(self, batch):
+        accepted, rejected = batch["accepted"], batch["rejected"]
+
+        y_accepted = accepted["y"]
+        y_rejected = rejected["y"]
+        cmask_accepted = accepted["completion_mask"]
+        cmask_rejected = rejected["completion_mask"]
+
+        exclude_keys = {"labels", "completion_mask"}
+        accepted_inputs = {k: v for k, v in accepted.items() if k not in exclude_keys}
+        rejected_inputs = {k: v for k, v in rejected.items() if k not in exclude_keys}
+
+        logits_accepted, _ = self.model(**accepted_inputs)
+        logits_rejected, _ = self.model(**rejected_inputs)
+
+        with torch.no_grad():
+            logits_accepted_ref, _ = self.reference_model(**accepted_inputs)
+            logits_rejected_ref, _ = self.reference_model(**rejected_inputs)
+
+        loss, logprobs_accepted, logprobs_rejected = dpo_util.dpo_loss(
+            logits_accepted,
+            logits_rejected,
+            logits_accepted_ref,
+            logits_rejected_ref,
+            y_accepted,
+            y_rejected,
+            cmask_accepted,
+            cmask_rejected,
+            self.config.beta,
+            return_logprobs=True
+        )
+        return {
+            "loss": loss,
+            "logprobs_accepted": logprobs_accepted,
+            "logprobs_rejected": logprobs_rejected,
+        }
+
+    @staticmethod
+    def _print_validation_results(metrics, samples, samples_seen, took_hms):
+        _print_validation_results(metrics, samples, samples_seen, took_hms, mode="dpo")
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint,
+        train_dataset,
+        validation_dataset,
+        device,
+        override_config=None,
+    ):
+        """Continue a DPO run from checkpoint"""
+        logger.info(
+            f"Initializing DPOTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
+        )
+
+        if override_config is None:
+            trainer_config = DPOTrainerConfig(**checkpoint["trainer_config"])
+        else:
+            trainer_config = override_config
+
+        sft_checkpoint = torch.load(
+            trainer_config.sft_checkpoint_filepath,
+            weights_only=False,
+            map_location="cpu",
+        )
+        reference_model_config = GPTConfig(**sft_checkpoint["model_config"])
+        reference_model = FineTuneableGPT2(reference_model_config)
+        reference_model.load_state_dict(sft_checkpoint["model_state_dict"])
+
+        model_config = GPTConfig(**checkpoint["model_config"])
+        model = FineTuneableGPT2(model_config)
+
+        if lora_config_dict := checkpoint["lora_config"]:
+            lora_config = LoRAConfig(**lora_config_dict)
+            model.apply_lora(lora_config)
+
+        model.load_state_dict(checkpoint["model_state_dict"])
+
+        trainer = cls(
+            trainer_config,
+            model,
+            reference_model,
+            checkpoint["tokenizer"],
+            train_dataset,
+            validation_dataset,
+            device,
+        )
+        trainer.samples_seen = checkpoint["samples_seen"]
+        if checkpoint["validation_metrics"] is not None:
+            trainer.best_loss = checkpoint["validation_metrics"]["loss"]
+
+        return trainer
+
+    @classmethod
+    def init_from_sft_checkpoint(
+        cls,
+        checkpoint,
+        config,
+        lora_config,
+        train_dataset,
+        validation_dataset,
+        device,
+    ):
+        """Iinitialize a new DPO run from SFT checkpoint"""
+        logger.info(
+            f"Initializing DPOTrainer from checkpoint saved on "
+            f"'{checkpoint['datetime']}'"
+        )
+        model_config = GPTConfig(**checkpoint["model_config"])
+
+        reference_model = FineTuneableGPT2(model_config)
+        reference_model.load_state_dict(checkpoint["model_state_dict"])
+
+        if checkpoint["lora_config"] is not None:
+            raise NotImplementedError(
+                "Initializing a DPOTrainer from a SFT checkpoint where LoRA is used is "
+                "unsupported as of now"
+            )
+
+        model = FineTuneableGPT2(model_config)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        if lora_config is not None:
+            model.apply_lora(lora_config)
+
+        assert (
+            reference_model.transformer.wte.weight.data_ptr()
+            != model.transformer.wte.weight.data_ptr()
+        )
+        return cls(
+            config,
+            model,
+            reference_model,
+            checkpoint["tokenizer"],
+            train_dataset,
+            validation_dataset,
+            device,
+        )

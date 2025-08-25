@@ -58,17 +58,17 @@ The SFT phase teaches the model to engage in reciprocal conversations rather tha
 
 ### Direct Preference Optimization (DPO) [Planned]
 
-The DPO phase will improve response quality by:
+The DPO phase will improve response quality by directly aligning model behavior with human preferences. Unlike traditional RLHF, which relies on reward modeling and policy optimization, DPO offers a simpler and more stable approach. This phase focuses on:
 
 - Learning from preference data
 - Distinguishing high-quality from low-quality responses
 - Optimizing for helpfulness and informativeness without explicit reward modeling
 
-DPO is a relatively new method, replacing the more traditional, albeit more unstable and finicky, two-stage RLHF.
+Together, **SFT provides the baseline alignment**, while **DPO sharpens the model’s ability to capture nuanced human preferences**.
 
-## 📊 Sample Outputs
+## 📊 Sample Outputs  
 
-The following example demonstrates the impact of Supervised Fine-Tuning on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and about one hour of training on a `g5.xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements SFT provides in conversational alignment, compared to a pre-trained document-completing model.
+The following example demonstrates the impact of **Supervised Fine-Tuning (SFT)** and **Direct Preference Optimization (DPO)** on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and approximately five hours of training on a `g5.4xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements both methods provide in conversational alignment.
 
 ### Before SFT
 
@@ -93,48 +93,62 @@ too." What if you take to the Internet and try to teach about the joys of machin
 learning.
 ```
 
-As you can see, a pre-trained document-completion GPT model is entirely incapable of reciprocal conversation or answering questions.
+On its own, a pre-trained GPT trained for document completion cannot hold a back-and-forth conversation or provide direct answers to questions.
 
-### After SFT
+### After SFT and DPO
 
 ```
 ========== user ==========
 What does a Data Scientist do?
 
 ========== assistant ==========
-A Data Scientist is a professional who specializes in managing data in the research
-industry. They handle data using sophisticated tools and techniques to analyze and
-interpret complex data sets, and make decisions about its quality and applicability to
-their customer's needs. While a Data Scientist is a critical part of your organization's
-data science efforts and might provide significant benefits, it's likely the most
-challenging role in the industry, since they often work alone or within a team, and
-must master technical skills designed for software programmers.
+A data scientist plays a crucial role in driving the business and organization in which
+you work to achieve more and better outcomes for your users. A data scientist is a data
+analyst who uses statistical, machine learning, and analytics abilities to extract
+insights from data, identify patterns, and make informed decisions.
 
-Learning from seasoned data scientists may help you stay ahead of the curve, and develop
-your skills on the cutting edge of computing, analytics, and machine learning, as well
-as on innovative new technologies in business.
+They analyze reports, dashboards, and data sources on various stakeholders, including
+customers, partners, and competitors, to gain a deeper understanding of their behaviors,
+interests, and pain points. This analysis helps them develop targeted and effective
+solutions, which can benefit the business or organization in several ways.
+
+Data scientists also contribute in various technical aspects, such as schema design,
+data visualization, data optimization, and data modeling. By working collaboratively
+with different teams and departments, they can provide valuable insights and tools for
+decision-making and growth.
+
+When working with complex data-driven challenges, a data scientist can focus on the
+technical aspects and develop effective strategies to understand the data, extract
+insights, and communicate with stakeholders effectively.
 
 ========== user ==========
 What about a Machine Learning Engineer?
 
 ========== assistant ==========
-A Machine Learning Engineer is responsible for developing advanced analytical,
-learning, and machine learning models.
+A machine learning engineer is someone who is responsible for developing and
+maintaining data-driven algorithms, and responsible for understanding and optimizing
+the system-wide requirements of machine learning.
 
-A Machine Learning Engineer strives to create the most appropriate machine learning
-models to achieve the highest levels of accuracy and predictive power.
+As the generalist in machine learning, their primary responsibility is to ensure that
+machine learning algorithms are reliable, scalable, and well-behaved, ensuring that
+the system remains sensitive to individual preferences while performing well across
+different domains.
 
-The job is to create algorithms that are able to efficiently extract, process, and
-store knowledge from large datasets, leveraging and extending other factors such as
-machine learning frameworks, data support systems, human-like models, and AI software.
+Another important aspect of a machine learning engineer's role is to ensure that the
+algorithm works as expected in real-world applications, without any biases or edge
+cases. This involves conducting thorough and unbiased evaluations, and ensuring that
+the performance of the machine learning model in terms of accuracy, precision, and
+reliability is kept up to the NDA criteria.
 
-The most important feature of the job is to make use of the latest advances in machine
-learning techniques and algorithms, and to create systems that are capable of solving
-a variety of tasks in deep neural networks, sentiment generation, object recognition,
-and other complex applications across different domains.
+While a machine learning engineer typically holds a bachelor's degree in mathematics
+or computer science, they can also specialize in areas such as machine learning,
+computer vision, or machine learning theory. In general, the key roles of a machine
+learning engineer are to develop and refine algorithms, support the development and
+implementation of machine learning models, and implement and maintain the
+infrastructure associated with the system.
 ```
 
-Perfect? That's a stretch. Improvement? Well, you be the judge :)
+Perfect? Well, that's a stretch. Improvement over the baseline? You be the judge :)
 
 ## 📝 License
 
