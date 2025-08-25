@@ -10,13 +10,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = None  # if None, start from SFT checkpoint
-N_SAMPLES_TRAIN = 124_000
+N_SAMPLES_TRAIN = 100_200
 
 DATASET_PATH_NAMES = [
     "Anthropic/hh-rlhf",
     "openbmb/UltraFeedback",
 ]
-SAMPLING_FACTORS = [0.5, 0.5]
+SAMPLING_FACTORS = [0.6, 0.6]
 MAX_LEN = 512
 
 DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
@@ -26,7 +26,7 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     compile=False,
     base_learning_rate=1e-5,
     min_learning_rate=1e-6,
-    lr_step_size=2000,
+    lr_step_size=10_000,
     lr_gamma=0.75,
     weight_decay=0.01,
     betas=(0.9, 0.95),
@@ -34,8 +34,8 @@ DEFAULT_TRAINER_CONFIG = DPOTrainerConfig(
     num_workers=1,
     prefetch_factor=2,
     pin_memory=False,
-    validation_samples=1500,
-    validation_interval=5_000,
+    validation_samples=5_000,
+    validation_interval=10_000,
     generate_sample_prompts=[
         "Can you give me instructions for making lasagna?",
         "I'm travelling to Rome, Italy next summer, what are the best attractions there?",
