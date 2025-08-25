@@ -4,22 +4,15 @@ A **from-scratch PyTorch implementation of GPT-2 fine-tuning for conversational 
 
 This project is a personal deep dive to really get under the hood of how these fine-tuning methods work in practice.
 
-Note: **repo still work in progress ⚠️**
-
 ## 🚀 Key Features
-
-### ✅ Completed
 
 - **GPT2 Architecture**: Complete PyTorch implementation of the GPT2 transformer architecture from scratch
 - **Weight Loading**: Integration with Hugging Face pre-trained GPT2 weights for document completion
 - **Training Pipeline**: Custom training and evaluation suite for low-level control
-- **Supervised Fine-Tuning (SFT)**: SFT implementation supporting OASST1/OASST2 datasets to teach reciprocal conversation patterns
+- **Supervised Fine-Tuning (SFT)**: SFT implementation supporting OASST and SmolTalk datasets to teach reciprocal conversation patterns
+- **Direct Preference Optimization (DPO)**: DPO implementation supporting UltraFeedback and HH-RLHF datasets to improve response quality by learning to distinguish between informative and uninformative responses
 - **LoRA (Low-Rank Adaptation)**: From-scratch PyTorch implementation for parameter-efficient fine-tuning, reducing memory usage and training time
 - **CLI Chat Interface**: Lightweight terminal-based chat interface for interacting with fine-tuned models
-
-### 🚧 In Development
-
-- **Direct Preference Optimization (DPO)**: Implementation to improve response quality by learning to distinguish between informative and uninformative responses
 
 ## 🛠️ Installation
 
@@ -68,7 +61,7 @@ Together, **SFT provides the baseline alignment**, while **DPO sharpens the mode
 
 ## 📊 Sample Outputs  
 
-The following example demonstrates the impact of **Supervised Fine-Tuning (SFT)** and **Direct Preference Optimization (DPO)** on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and approximately five hours of training on a `g5.4xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements both methods provide in conversational alignment.
+The following example demonstrates the impact of **Supervised Fine-Tuning (SFT)** and **Direct Preference Optimization (DPO)** on model responses using a 355 M parameter GPT-2 model (`gpt2-medium`) and approximately eight hours of training on a `g5.4xlarge` EC2 instance on AWS. While this model has severely limited capacity compared to modern LLMs with parameter counts in the hundreds of billions, the examples illustrate the fundamental improvements both methods provide in conversational alignment.
 
 ### Before SFT
 
