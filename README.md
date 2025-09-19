@@ -49,9 +49,9 @@ The SFT phase teaches the model to engage in reciprocal conversations rather tha
 - Teaching turn-taking and context awareness
 - Maintaining coherence across multi-turn dialogues
 
-### Direct Preference Optimization (DPO) [Planned]
+### Direct Preference Optimization (DPO)
 
-The DPO phase will improve response quality by directly aligning model behavior with human preferences. Unlike traditional RLHF, which relies on reward modeling and policy optimization, DPO offers a simpler and more stable approach. This phase focuses on:
+The DPO phase improves response quality by directly aligning model behavior with human preferences. Unlike traditional RLHF, which relies on reward modeling and policy optimization, DPO offers a simpler and more stable approach. This phase focuses on:
 
 - Learning from preference data
 - Distinguishing high-quality from low-quality responses
