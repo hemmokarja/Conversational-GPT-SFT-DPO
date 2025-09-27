@@ -25,12 +25,19 @@ uv sync
 
 ## 🚀 Quick Start
 
-### Fine-tuning with SFT
+### Fine-tuning with SFT and DPO
+
 To apply Supervised Fine-Tuning, run:
 ```bash
 uv run sft.py
 ```
-Remember to adjust configs (in that file) to your liking.
+
+To apply Direct Preference Optimization, run:
+```bash
+uv run dpo.py
+```
+
+Remember to adjust configs (in those files) to your liking.
 
 ### Chatting with a Fine-tuned Model
 To chat with a fine-tuned model, run:
